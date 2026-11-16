@@ -146,7 +146,7 @@ function OverallCell({
         {overall.finalScore === null ? "—" : overall.finalScore}
         {overall.finalSource === "override" ? "（已覆盖）" : ""}
       </div>
-      {overall.status === "incomplete" ? (
+      {overall.missingGradeItemIds.length > 0 ? (
         <div className="hint">
           缺 {overall.missingGradeItemIds.length} 项
         </div>
