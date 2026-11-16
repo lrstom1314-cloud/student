@@ -2,39 +2,37 @@ import { NextResponse } from "next/server";
 
 import { requireApiUser } from "@/lib/auth";
 import { errorResponse, internalError, isUuid, NO_STORE } from "@/lib/http";
-import { listStudentPublishedGrades } from "@/lib/student-grades";
-import { resolveTermScope } from "@/lib/teaching-classes";
+import { getStudentGradeReport } from "@/lib/student-grades";
 
 export const dynamic = "force-dynamic";
 
 /**
- * 学生本人的成绩：只返回自己的数据；未发布的教学班只有「暂无成绩」，
- * 已发布的读取最近一次发布的快照。
+ * 学生本人的成绩：学期固定为当前学期，学生身份来自会话。
+ * 不接受用参数切换到他人或历史学期：指定他人返回 403，指定学期返回 400。
  */
 export async function GET(request: Request) {
   const guard = await requireApiUser({ roles: ["student"] });
   if (!guard.ok) return guard.response;
 
-  const termParam = new URL(request.url).searchParams.get("termId");
-  if (termParam !== null && !isUuid(termParam)) {
-    return errorResponse("学期不存在。", 400);
+  const params = new URL(request.url).searchParams;
+  if (params.get("termId") !== null) {
+    return errorResponse("学生成绩只显示当前学期，不能指定学期。", 400);
   }
 
   try {
-    const resolved = await resolveTermScope(termParam);
-    if (!resolved.ok) {
-      return errorResponse(resolved.error, resolved.status);
+    const report = await getStudentGradeReport(guard.user.id);
+
+    const requestedStudentId = params.get("studentId");
+    if (requestedStudentId !== null) {
+      if (
+        !isUuid(requestedStudentId) ||
+        report.student?.id !== requestedStudentId
+      ) {
+        return errorResponse("无权访问。", 403);
+      }
     }
 
-    const { currentTerm, term } = resolved.scope;
-    const courses = term
-      ? await listStudentPublishedGrades(guard.user.id, term.id)
-      : [];
-
-    return NextResponse.json(
-      { currentTerm, term, courses },
-      { headers: NO_STORE },
-    );
+    return NextResponse.json(report, { headers: NO_STORE });
   } catch (error) {
     return internalError(error);
   }
