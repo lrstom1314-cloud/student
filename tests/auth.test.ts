@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestApp, type TestApp } from "./support/app";
 import { queryRows } from "./support/db";
 import { databaseUrl, ROOT } from "./support/env";
+import { loginRequest } from "./support/login";
 
 const COOKIE_NAME = "student_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7;
@@ -93,19 +94,9 @@ function bootstrapAdmin(loginName: string, password: string): void {
   }
 }
 
-async function login(
-  loginName: string,
-  password: string,
-  next?: string,
-): Promise<{ response: Response; body: Json; cookie: string }> {
-  const response = await api("POST", "/api/auth/login", {
-    loginName,
-    password,
-    ...(next === undefined ? {} : { next }),
-  });
-  const body = (await response.json()) as Json;
-  return { response, body, cookie: sessionCookie(response) };
-}
+/** 登录逻辑集中在 tests/support/login.ts，这里只固定本文件的 baseUrl。 */
+const login = (loginName: string, password: string, next?: string) =>
+  loginRequest(app.baseUrl, { loginName, password, next });
 
 async function createAccount(input: {
   loginName: string;

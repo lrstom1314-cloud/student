@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestApp, type TestApp } from "./support/app";
 import { queryRows } from "./support/db";
 import { databaseUrl, ROOT } from "./support/env";
+import { loginCookie } from "./support/login";
 
 const ADMIN_LOGIN = "admin01";
 const ADMIN_PASSWORD = "管理员密码123";
@@ -97,12 +98,6 @@ async function page(route: string, cookie?: string): Promise<Response> {
   });
 }
 
-function sessionCookie(response: Response): string {
-  const raw = response.headers.get("set-cookie");
-  if (!raw) return "";
-  return raw.split(";")[0] ?? "";
-}
-
 function bootstrapAccount(input: {
   loginName: string;
   displayName: string;
@@ -141,14 +136,9 @@ function bootstrapAccount(input: {
   }
 }
 
-async function login(loginName: string, password: string): Promise<string> {
-  const response = await api("POST", "/api/auth/login", {
-    loginName,
-    password,
-  });
-  expect(response.status).toBe(200);
-  return sessionCookie(response);
-}
+/** 登录逻辑集中在 tests/support/login.ts，这里只固定本文件的 baseUrl。 */
+const login = (loginName: string, password: string): Promise<string> =>
+  loginCookie(app.baseUrl, loginName, password);
 
 async function errorOf(response: Response): Promise<string> {
   const body = (await response.json()) as { error?: unknown };

@@ -117,7 +117,7 @@ export async function listGradeChangeLogsByTeachingClass(
 
 /**
  * 某学生的全部变更日志，跨教学班；教务管理员按学生追溯时使用。
- * 发布与解锁是教学班级动作（没有目标学生），只要该学生当前在这个教学班名单里，
+ * 发布与解锁是教学班动作（没有目标学生），只要该学生当前在这个教学班名单里，
  * 这些事件也应当出现在他的追溯记录中。
  */
 export async function listGradeChangeLogsByStudent(

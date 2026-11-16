@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string; entryId: string }> };
 
-/** 修改课表条目：整条替换，保存后重新计算冲突。 */
+/** 修改课表条目：整条替换，保存前先判定冲突，未确认时不落库。 */
 export async function PATCH(request: Request, context: Context) {
   const guard = await requireApiUser({ roles: ["administrator", "teacher"] });
   if (!guard.ok) return guard.response;
@@ -39,7 +39,16 @@ export async function PATCH(request: Request, context: Context) {
       values: parsed.input,
       acknowledgeConflicts: body.acknowledgeConflicts === true,
     });
-    if (!result.ok) return errorResponse(result.error, result.status);
+    if (!result.ok) {
+      // 409 带冲突详情，前端据此先展示冲突，确认后再提交。
+      if (result.conflicts !== undefined) {
+        return NextResponse.json(
+          { error: result.error, conflicts: result.conflicts },
+          { status: result.status, headers: NO_STORE },
+        );
+      }
+      return errorResponse(result.error, result.status);
+    }
 
     return NextResponse.json(
       { entry: result.entry, conflicts: result.conflicts },

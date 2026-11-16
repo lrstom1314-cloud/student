@@ -225,7 +225,7 @@ test("验收剧本：导入名单 → 排课 → 录入并发布成绩 → 学�
     const teacher = await teacherContext.newPage();
     const student = await studentContext.newPage();
 
-    await test.step("1. 管理员登录", async () => {
+    await test.step("1. 教务管理员登录", async () => {
       await login(admin, ADMIN.loginName, ADMIN.password);
       await expect(
         admin.getByRole("heading", { name: "账号管理" }),
@@ -532,7 +532,7 @@ test("验收剧本：导入名单 → 排课 → 录入并发布成绩 → 学�
       await expect(student.getByText(/排名|班级平均/)).toHaveCount(0);
     });
 
-    await test.step("11. 管理员在变更日志中看到本次发布", async () => {
+    await test.step("11. 教务管理员在变更日志中看到本次发布", async () => {
       await admin.goto(appUrl("/admin/grade-logs"));
       await admin
         .getByLabel("按教学班查询")

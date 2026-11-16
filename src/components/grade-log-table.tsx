@@ -18,7 +18,7 @@ function valueLabel(value: number | null): string {
 
 /**
  * 成绩变更日志表格：谁、何时、哪个学生、哪一项、旧值→新值、动作。
- * 发布与解锁是教学班级动作，学生列显示「—」。
+ * 发布与解锁是教学班动作，学生列显示「—」。
  */
 export function GradeLogTable({ entries }: { entries: GradeChangeLogEntry[] }) {
   if (entries.length === 0) {

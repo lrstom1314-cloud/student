@@ -266,9 +266,7 @@ async function loadSheetParts(
     from grade_overalls
     where teaching_class_id = ${teachingClass.id}
   `;
-  const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
-    select grade_state from teaching_classes where id = ${teachingClass.id}
-  `;
+  const gradeState = await teachingClassGradeState(tx, teachingClass.id);
   const publicationRows = await tx<
     { id: string; version: number; published_at: Date }[]
   >`
@@ -364,7 +362,7 @@ async function loadSheetParts(
     weightWarning,
     students,
     lock: {
-      state: lockRows[0]?.grade_state ?? "draft",
+      state: gradeState.ok ? gradeState.state : "draft",
       latestPublication: latest
         ? {
             id: latest.id,
@@ -376,30 +374,50 @@ async function loadSheetParts(
   };
 }
 
-type UnlockedCheck =
-  | { ok: true }
-  | { ok: false; status: number; error: string };
+type GradeState = "draft" | "published";
+
+type GradeStateExpectation = {
+  /** 期望的状态；不符时返回 conflictError。 */
+  expect: GradeState;
+  /** 状态不符时展示的中文说明（409）。 */
+  conflictError: string;
+};
 
 /**
- * 在写入事务里锁住教学班行并检查状态。发布/解锁也取同一行的锁，
- * 因此「发布」与「保存成绩」不会交错，锁定语义没有竞态窗口。
+ * 读取教学班的 grade_state。
+ *
+ * 传入 expectation 时用 `for update` 锁住该行，让发布、解锁与成绩写入
+ * 在同一把行锁上排队，锁定语义没有竞态窗口；状态不符直接返回 409。
+ * 不传 expectation 时是普通读取（成绩单展示用，不参与写事务）。
+ * 教学班不存在统一返回 404。
  */
-async function assertGradeUnlocked(
-  tx: TransactionSql,
+async function teachingClassGradeState(
+  client: Sql | TransactionSql,
   teachingClassId: string,
-): Promise<UnlockedCheck> {
-  const rows = await tx<{ grade_state: "draft" | "published" }[]>`
-    select grade_state from teaching_classes
-    where id = ${teachingClassId}
-    for update
-  `;
-  if (rows.length === 0) {
+  expectation?: GradeStateExpectation,
+): Promise<
+  | { ok: true; state: GradeState }
+  | { ok: false; status: number; error: string }
+> {
+  const rows = expectation
+    ? await client<{ grade_state: GradeState }[]>`
+        select grade_state from teaching_classes
+        where id = ${teachingClassId}
+        for update
+      `
+    : await client<{ grade_state: GradeState }[]>`
+        select grade_state from teaching_classes
+        where id = ${teachingClassId}
+      `;
+
+  const row = rows[0];
+  if (!row) {
     return { ok: false, status: 404, error: "教学班不存在。" };
   }
-  if (rows[0]!.grade_state === "published") {
-    return { ok: false, status: 409, error: GRADE_LOCKED_MESSAGE };
+  if (expectation && row.grade_state !== expectation.expect) {
+    return { ok: false, status: 409, error: expectation.conflictError };
   }
-  return { ok: true };
+  return { ok: true, state: row.grade_state };
 }
 
 export async function getGradeSheet(
@@ -542,8 +560,11 @@ export async function saveScores(input: {
   const outcome = await sql.begin<
     { ok: true; updatedCount: number } | { ok: false; status: number; error: string }
   >(async (tx) => {
-    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
-    if (!unlocked.ok) return unlocked;
+    const state = await teachingClassGradeState(tx, input.teachingClassId, {
+      expect: "draft",
+      conflictError: GRADE_LOCKED_MESSAGE,
+    });
+    if (!state.ok) return state;
 
     const itemRows = await tx<{ id: string; max_score: string }[]>`
       select id, max_score::text as max_score
@@ -697,8 +718,11 @@ export async function setOverallOverride(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
-    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
-    if (!unlocked.ok) return unlocked;
+    const state = await teachingClassGradeState(tx, input.teachingClassId, {
+      expect: "draft",
+      conflictError: GRADE_LOCKED_MESSAGE,
+    });
+    if (!state.ok) return state;
 
     const rosterRows = await tx<{ student_id: string }[]>`
       select student_id from teaching_class_students
@@ -792,8 +816,11 @@ export async function cancelOverallOverride(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
-    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
-    if (!unlocked.ok) return unlocked;
+    const state = await teachingClassGradeState(tx, input.teachingClassId, {
+      expect: "draft",
+      conflictError: GRADE_LOCKED_MESSAGE,
+    });
+    if (!state.ok) return state;
 
     const overallRows = await tx<
       { computed_score: string | null; override_score: string | null }[]
@@ -900,8 +927,11 @@ export async function createGradeItem(input: {
       | { ok: true; gradeItemId: string }
       | { ok: false; status: number; error: string }
     >(async (tx) => {
-      const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
-      if (!unlocked.ok) return unlocked;
+      const state = await teachingClassGradeState(tx, input.teachingClassId, {
+        expect: "draft",
+        conflictError: GRADE_LOCKED_MESSAGE,
+      });
+      if (!state.ok) return state;
 
       const inserted = await tx<{ id: string }[]>`
         insert into grade_items (teaching_class_id, name, max_score, weight)
@@ -973,17 +1003,11 @@ export async function publishGrades(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
-    const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
-      select grade_state from teaching_classes
-      where id = ${input.teachingClassId}
-      for update
-    `;
-    if (lockRows.length === 0) {
-      return { ok: false, status: 404, error: "教学班不存在。" };
-    }
-    if (lockRows[0]!.grade_state === "published") {
-      return { ok: false, status: 409, error: LOCKED_PUBLISH_MESSAGE };
-    }
+    const state = await teachingClassGradeState(tx, input.teachingClassId, {
+      expect: "draft",
+      conflictError: LOCKED_PUBLISH_MESSAGE,
+    });
+    if (!state.ok) return state;
 
     const itemRows = await tx<ItemRow[]>`
       select id, name, max_score::text as max_score, weight::text as weight
@@ -1198,21 +1222,11 @@ export async function unlockGrades(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
-    const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
-      select grade_state from teaching_classes
-      where id = ${input.teachingClassId}
-      for update
-    `;
-    if (lockRows.length === 0) {
-      return { ok: false, status: 404, error: "教学班不存在。" };
-    }
-    if (lockRows[0]!.grade_state === "draft") {
-      return {
-        ok: false,
-        status: 409,
-        error: "该教学班当前未锁定，无需解锁。",
-      };
-    }
+    const state = await teachingClassGradeState(tx, input.teachingClassId, {
+      expect: "published",
+      conflictError: "该教学班当前未锁定，无需解锁。",
+    });
+    if (!state.ok) return state;
 
     await tx`
       update teaching_classes

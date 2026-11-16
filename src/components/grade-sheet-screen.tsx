@@ -300,7 +300,7 @@ function UnlockPanel({
           name="reason"
           required
           maxLength={500}
-          placeholder="如：期末成绩录入错误，需更正"
+          placeholder="如：总评录入错误，需更正"
           value={reason}
           onChange={(event) => setReason(event.target.value)}
         />
@@ -493,9 +493,11 @@ export function GradeSheetScreen({
       <section>
         <h2>导出成绩表</h2>
         <p className="hint">
-          {lock.latestPublication
-            ? "导出的是最后一次发布的成绩快照；解锁期间的修改不会出现在文件中。文件为 UTF-8 带 BOM 的 CSV，Excel 可直接打开。"
-            : "本教学班尚未发布，导出文件仅供内部核对，会在文件名与首行标注「未发布」，不代表正式成绩。"}
+          {lock.state === "draft" && lock.latestPublication
+            ? "导出的是上一次发布的成绩快照；文件名与首行会标注「解锁中·内容为上次发布」，解锁期间的修改不会出现在文件中。文件为 UTF-8 带 BOM 的 CSV，Excel 可直接打开。"
+            : lock.latestPublication
+              ? "导出的是最后一次发布的成绩快照。文件为 UTF-8 带 BOM 的 CSV，Excel 可直接打开。"
+              : "本教学班尚未发布，导出文件仅供内部核对，会在文件名与首行标注「未发布」，不代表正式成绩。"}
         </p>
         <p>
           <a href={`/api/teaching-classes/${teachingClassId}/grades/export`}>
@@ -517,7 +519,7 @@ export function GradeSheetScreen({
         )}
         <p className="hint">
           总评 = Σ(得分 ÷ 满分 × 权重)，保留两位小数。得分留空表示缺考或未录入，
-          不按 0 分参与计算；任一分项缺失时总评显示为「未完成」。
+          不按 0 分参与计算；任一成绩项缺失时总评显示为「未完成」。
         </p>
 
         {gradeItems.length === 0 ? (

@@ -33,8 +33,9 @@ export async function GET(_request: Request, context: Context) {
 }
 
 /**
- * 添加课表条目：冲突只告警、不阻塞保存。
- * 请求带 acknowledgeConflicts: true 时，把「已确认冲突」的痕迹留在条目上。
+ * 添加课表条目：保存前先判定冲突。
+ * 有冲突且未带 acknowledgeConflicts: true 时返回 409 与冲突详情，不落库；
+ * 确认后才写入，并把「已确认冲突」的痕迹留在条目上。
  */
 export async function POST(request: Request, context: Context) {
   const guard = await requireApiUser({ roles: ["administrator", "teacher"] });
@@ -58,7 +59,16 @@ export async function POST(request: Request, context: Context) {
       values: parsed.input,
       acknowledgeConflicts: body.acknowledgeConflicts === true,
     });
-    if (!result.ok) return errorResponse(result.error, result.status);
+    if (!result.ok) {
+      // 409 带冲突详情，前端据此先展示冲突，确认后再提交。
+      if (result.conflicts !== undefined) {
+        return NextResponse.json(
+          { error: result.error, conflicts: result.conflicts },
+          { status: result.status, headers: NO_STORE },
+        );
+      }
+      return errorResponse(result.error, result.status);
+    }
 
     return NextResponse.json(
       { entry: result.entry, conflicts: result.conflicts },

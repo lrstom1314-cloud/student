@@ -16,12 +16,14 @@ import {
   weekLabel,
 } from "@/lib/timetable-labels";
 
-type SaveResponse = {
-  entry: TimetableEntry;
+type ApiError = { error?: string; conflicts?: TimetableConflict[] };
+
+type PendingConflict = {
+  entryId: string | null;
+  body: Record<string, unknown>;
+  message: string;
   conflicts: TimetableConflict[];
 };
-
-type ApiError = { error?: string };
 
 async function failureMessage(
   response: Response,
@@ -131,8 +133,9 @@ function valuesOf(form: HTMLFormElement): Record<string, unknown> {
 
 /**
  * 课表编辑区：录入、修改、删除与冲突确认。
- * 冲突只告警不阻塞：保存成功后若发现冲突，提示教师确认或删除；
- * 未确认的条目仍会保留，并在列表里显示「存在冲突（未确认）」。
+ * 保存前先判定冲突：有冲突时服务端返回 409 且不落库，
+ * 这里展示冲突详情与「确认冲突并保存」，确认后才带着 acknowledgeConflicts 重新提交。
+ * 已确认的条目在列表里显示「已确认冲突」。
  */
 export function TimetableSection({
   teachingClassId,
@@ -147,7 +150,8 @@ export function TimetableSection({
   const [showAdd, setShowAdd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<SaveResponse | null>(null);
+  const [pendingConflict, setPendingConflict] =
+    useState<PendingConflict | null>(null);
 
   const conflictsOf = (entryId: string) =>
     conflicts.filter((conflict) => conflict.entryId === entryId);
@@ -156,15 +160,14 @@ export function TimetableSection({
     window.location.reload();
   }
 
-  async function handleSave(
-    event: React.FormEvent<HTMLFormElement>,
+  async function submit(
+    body: Record<string, unknown>,
     entryId: string | null,
+    acknowledgeConflicts: boolean,
   ) {
-    event.preventDefault();
     setError(null);
     setBusy(true);
 
-    const body = valuesOf(event.currentTarget);
     const route = entryId
       ? `/api/teaching-classes/${teachingClassId}/timetable/${entryId}`
       : `/api/teaching-classes/${teachingClassId}/timetable`;
@@ -173,23 +176,41 @@ export function TimetableSection({
       const response = await fetch(route, {
         method: entryId ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...body,
+          ...(acknowledgeConflicts ? { acknowledgeConflicts: true } : {}),
+        }),
       });
+
+      if (response.status === 409) {
+        const payload = (await response
+          .json()
+          .catch(() => ({}))) as ApiError;
+        setPendingConflict({
+          entryId,
+          body,
+          message:
+            typeof payload.error === "string"
+              ? payload.error
+              : "存在课表时间冲突，尚未保存。",
+          conflicts: Array.isArray(payload.conflicts)
+            ? payload.conflicts
+            : [],
+        });
+        setBusy(false);
+        return;
+      }
+
       if (!response.ok) {
         setError(await failureMessage(response, "保存课表失败，请稍后再试。"));
         setBusy(false);
         return;
       }
 
-      const result = (await response.json()) as SaveResponse;
       setBusy(false);
       setEditingId(null);
       setShowAdd(false);
-
-      if (result.conflicts.length > 0) {
-        setSaved(result);
-        return;
-      }
+      setPendingConflict(null);
       reload();
     } catch {
       setError("网络异常，请稍后再试。");
@@ -197,37 +218,33 @@ export function TimetableSection({
     }
   }
 
+  async function handleSave(
+    event: React.FormEvent<HTMLFormElement>,
+    entryId: string | null,
+  ) {
+    event.preventDefault();
+    await submit(valuesOf(event.currentTarget), entryId, false);
+  }
+
+  async function confirmPending() {
+    if (pendingConflict === null) return;
+    await submit(pendingConflict.body, pendingConflict.entryId, true);
+  }
+
   async function acknowledge(entry: TimetableEntry) {
-    setError(null);
-    setBusy(true);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/timetable/${entry.id}`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            weekday: entry.weekday,
-            startPeriod: entry.startPeriod,
-            endPeriod: entry.endPeriod,
-            startWeek: entry.startWeek,
-            endWeek: entry.endWeek,
-            weekParity: entry.weekParity,
-            classroom: entry.classroom,
-            acknowledgeConflicts: true,
-          }),
-        },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "确认冲突失败，请稍后再试。"));
-        setBusy(false);
-        return;
-      }
-      reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setBusy(false);
-    }
+    await submit(
+      {
+        weekday: entry.weekday,
+        startPeriod: entry.startPeriod,
+        endPeriod: entry.endPeriod,
+        startWeek: entry.startWeek,
+        endWeek: entry.endWeek,
+        weekParity: entry.weekParity,
+        classroom: entry.classroom,
+      },
+      entry.id,
+      true,
+    );
   }
 
   async function remove(entryId: string) {
@@ -294,7 +311,7 @@ export function TimetableSection({
                         type="button"
                         className="secondary"
                         onClick={() => {
-                          setSaved(null);
+                          setPendingConflict(null);
                           setEditingId(entry.id);
                         }}
                         disabled={busy}
@@ -343,34 +360,27 @@ export function TimetableSection({
         </div>
       ) : null}
 
-      {saved !== null && saved.conflicts.length > 0 ? (
+      {pendingConflict !== null ? (
         <div className="notice" role="alert">
-          <p>
-            已保存，但发现 {saved.conflicts.length} 处时间冲突（警告不阻止保存）。
-            请确认是否保留这条课表：
-          </p>
+          <p>{pendingConflict.message}</p>
           <ul>
-            {saved.conflicts.map((conflict) => (
+            {pendingConflict.conflicts.map((conflict) => (
               <li key={`${conflict.entryId}-${conflict.conflictingEntryId}`}>
                 {conflict.message}
               </li>
             ))}
           </ul>
           <span className="actions">
-            <button
-              type="button"
-              onClick={() => acknowledge(saved.entry)}
-              disabled={busy}
-            >
-              确认冲突并保留
+            <button type="button" onClick={confirmPending} disabled={busy}>
+              {busy ? "保存中…" : "确认冲突并保存"}
             </button>
             <button
               type="button"
               className="secondary"
-              onClick={() => remove(saved.entry.id)}
+              onClick={() => setPendingConflict(null)}
               disabled={busy}
             >
-              删除这条课表
+              取消，不保存
             </button>
           </span>
         </div>
@@ -430,8 +440,9 @@ export function TimetableSection({
       ) : null}
 
       <p className="hint">
-        单双周说明：单周与双周的课不会落在同一周，因此互不冲突；
-        二者与「每周」的课时间重叠时会收到警告。
+        保存前会检查冲突：发现冲突时先不保存，确认后才写入。同一教学班内部同一时间排两条也会被判为冲突；
+        节次或周次只相接不算冲突。单双周：单周与双周的课不会落在同一周，因此互不冲突；
+        二者与「每周」的课时间重叠时会被判为冲突。
       </p>
     </div>
   );
