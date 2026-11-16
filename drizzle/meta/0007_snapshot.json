@@ -1,5 +1,5 @@
 {
-  "id": "7c9096ad-f306-4d1c-8e8e-dbd756722247",
+  "id": "31572af8-1992-443e-97cd-d063422f076f",
   "prevId": "42c75b6d-22a3-4a6c-8e44-77d876571cf4",
   "version": "7",
   "dialect": "postgresql",
@@ -261,7 +261,7 @@
           "name": "student_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "grade_item_id": {
           "name": "grade_item_id",
@@ -429,10 +429,6 @@
         "grade_change_logs_target_item": {
           "name": "grade_change_logs_target_item",
           "value": "\"grade_change_logs\".\"target\" = 'grade_item' or \"grade_change_logs\".\"grade_item_id\" is null"
-        },
-        "grade_change_logs_target_student": {
-          "name": "grade_change_logs_target_student",
-          "value": "(\"grade_change_logs\".\"target\"::text = 'teaching_class' and \"grade_change_logs\".\"student_id\" is null)\n        or (\"grade_change_logs\".\"target\"::text <> 'teaching_class' and \"grade_change_logs\".\"student_id\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -677,446 +673,6 @@
           "value": "(\"grade_overalls\".\"computed_score\" is null or \"grade_overalls\".\"computed_score\" >= 0)\n        and (\"grade_overalls\".\"override_score\" is null or \"grade_overalls\".\"override_score\" >= 0)"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.grade_publication_items": {
-      "name": "grade_publication_items",
-      "schema": "",
-      "columns": {
-        "publication_id": {
-          "name": "publication_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "grade_item_id": {
-          "name": "grade_item_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "max_score": {
-          "name": "max_score",
-          "type": "numeric(6, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "weight": {
-          "name": "weight",
-          "type": "numeric(5, 2)",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "grade_publication_items_publication_position_unique": {
-          "name": "grade_publication_items_publication_position_unique",
-          "columns": [
-            {
-              "expression": "publication_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "position",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grade_publication_items_publication_id_grade_publications_id_fk": {
-          "name": "grade_publication_items_publication_id_grade_publications_id_fk",
-          "tableFrom": "grade_publication_items",
-          "tableTo": "grade_publications",
-          "columnsFrom": [
-            "publication_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "grade_publication_items_publication_id_grade_item_id_pk": {
-          "name": "grade_publication_items_publication_id_grade_item_id_pk",
-          "columns": [
-            "publication_id",
-            "grade_item_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "grade_publication_items_max_score_positive": {
-          "name": "grade_publication_items_max_score_positive",
-          "value": "\"grade_publication_items\".\"max_score\" > 0"
-        },
-        "grade_publication_items_weight_range": {
-          "name": "grade_publication_items_weight_range",
-          "value": "\"grade_publication_items\".\"weight\" > 0 and \"grade_publication_items\".\"weight\" <= 100"
-        },
-        "grade_publication_items_position_non_negative": {
-          "name": "grade_publication_items_position_non_negative",
-          "value": "\"grade_publication_items\".\"position\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.grade_publication_overalls": {
-      "name": "grade_publication_overalls",
-      "schema": "",
-      "columns": {
-        "publication_id": {
-          "name": "publication_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "student_id": {
-          "name": "student_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "student_number": {
-          "name": "student_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "student_name": {
-          "name": "student_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "computed_score": {
-          "name": "computed_score",
-          "type": "numeric(8, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "override_score": {
-          "name": "override_score",
-          "type": "numeric(8, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "final_score": {
-          "name": "final_score",
-          "type": "numeric(8, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "final_source": {
-          "name": "final_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "grade_publication_overalls_student_id_idx": {
-          "name": "grade_publication_overalls_student_id_idx",
-          "columns": [
-            {
-              "expression": "student_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grade_publication_overalls_publication_id_grade_publications_id_fk": {
-          "name": "grade_publication_overalls_publication_id_grade_publications_id_fk",
-          "tableFrom": "grade_publication_overalls",
-          "tableTo": "grade_publications",
-          "columnsFrom": [
-            "publication_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grade_publication_overalls_student_id_students_id_fk": {
-          "name": "grade_publication_overalls_student_id_students_id_fk",
-          "tableFrom": "grade_publication_overalls",
-          "tableTo": "students",
-          "columnsFrom": [
-            "student_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "grade_publication_overalls_publication_id_student_id_pk": {
-          "name": "grade_publication_overalls_publication_id_student_id_pk",
-          "columns": [
-            "publication_id",
-            "student_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "grade_publication_overalls_final_source_valid": {
-          "name": "grade_publication_overalls_final_source_valid",
-          "value": "\"grade_publication_overalls\".\"final_source\" is null or \"grade_publication_overalls\".\"final_source\" in ('computed', 'override')"
-        },
-        "grade_publication_overalls_status_valid": {
-          "name": "grade_publication_overalls_status_valid",
-          "value": "\"grade_publication_overalls\".\"status\" in ('complete', 'incomplete')"
-        },
-        "grade_publication_overalls_scores_non_negative": {
-          "name": "grade_publication_overalls_scores_non_negative",
-          "value": "(\"grade_publication_overalls\".\"computed_score\" is null or \"grade_publication_overalls\".\"computed_score\" >= 0)\n        and (\"grade_publication_overalls\".\"override_score\" is null or \"grade_publication_overalls\".\"override_score\" >= 0)\n        and (\"grade_publication_overalls\".\"final_score\" is null or \"grade_publication_overalls\".\"final_score\" >= 0)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.grade_publication_scores": {
-      "name": "grade_publication_scores",
-      "schema": "",
-      "columns": {
-        "publication_id": {
-          "name": "publication_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "grade_item_id": {
-          "name": "grade_item_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "student_id": {
-          "name": "student_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "score": {
-          "name": "score",
-          "type": "numeric(6, 2)",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "grade_publication_scores_student_id_idx": {
-          "name": "grade_publication_scores_student_id_idx",
-          "columns": [
-            {
-              "expression": "student_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grade_publication_scores_publication_id_grade_publications_id_fk": {
-          "name": "grade_publication_scores_publication_id_grade_publications_id_fk",
-          "tableFrom": "grade_publication_scores",
-          "tableTo": "grade_publications",
-          "columnsFrom": [
-            "publication_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grade_publication_scores_student_id_students_id_fk": {
-          "name": "grade_publication_scores_student_id_students_id_fk",
-          "tableFrom": "grade_publication_scores",
-          "tableTo": "students",
-          "columnsFrom": [
-            "student_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "grade_publication_scores_publication_id_grade_item_id_student_id_pk": {
-          "name": "grade_publication_scores_publication_id_grade_item_id_student_id_pk",
-          "columns": [
-            "publication_id",
-            "grade_item_id",
-            "student_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "grade_publication_scores_score_non_negative": {
-          "name": "grade_publication_scores_score_non_negative",
-          "value": "\"grade_publication_scores\".\"score\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.grade_publications": {
-      "name": "grade_publications",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "teaching_class_id": {
-          "name": "teaching_class_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "published_by": {
-          "name": "published_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "published_at": {
-          "name": "published_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "grade_publications_teaching_class_id_version_unique": {
-          "name": "grade_publications_teaching_class_id_version_unique",
-          "columns": [
-            {
-              "expression": "teaching_class_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "version",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "grade_publications_teaching_class_id_idx": {
-          "name": "grade_publications_teaching_class_id_idx",
-          "columns": [
-            {
-              "expression": "teaching_class_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grade_publications_teaching_class_id_teaching_classes_id_fk": {
-          "name": "grade_publications_teaching_class_id_teaching_classes_id_fk",
-          "tableFrom": "grade_publications",
-          "tableTo": "teaching_classes",
-          "columnsFrom": [
-            "teaching_class_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grade_publications_published_by_accounts_id_fk": {
-          "name": "grade_publications_published_by_accounts_id_fk",
-          "tableFrom": "grade_publications",
-          "tableTo": "accounts",
-          "columnsFrom": [
-            "published_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.sessions": {
@@ -1568,14 +1124,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "grade_state": {
-          "name": "grade_state",
-          "type": "teaching_class_grade_state",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'draft'"
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1760,6 +1308,12 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "starts_on": {
+          "name": "starts_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2017,16 +1571,7 @@
       "schema": "public",
       "values": [
         "grade_item",
-        "overall",
-        "teaching_class"
-      ]
-    },
-    "public.teaching_class_grade_state": {
-      "name": "teaching_class_grade_state",
-      "schema": "public",
-      "values": [
-        "draft",
-        "published"
+        "overall"
       ]
     },
     "public.teaching_class_student_source": {

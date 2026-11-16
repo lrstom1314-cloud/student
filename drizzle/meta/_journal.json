@@ -54,8 +54,15 @@
     {
       "idx": 7,
       "version": "7",
-      "when": 1794850214406,
-      "tag": "0007_grade_publications",
+      "when": 1794850273846,
+      "tag": "0007_term_starts_on",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794850479505,
+      "tag": "0008_grade_publications",
       "breakpoints": true
     }
   ]

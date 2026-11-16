@@ -12,6 +12,8 @@ export type TermSummary = {
   startYear: number;
   academicYearLabel: string;
   isCurrent: boolean;
+  /** 教学第 1 周的起始日期（YYYY-MM-DD）；null 表示尚未设置。 */
+  startsOn: string | null;
 };
 
 export type AcademicYearSummary = {
@@ -43,7 +45,14 @@ type TermRow = {
   academic_year_id: string;
   start_year: number;
   is_current: boolean;
+  starts_on: string | Date | null;
 };
+
+function toStartsOn(value: string | Date | null): string | null {
+  if (value === null) return null;
+  if (typeof value === "string") return value.slice(0, 10);
+  return value.toISOString().slice(0, 10);
+}
 
 function toAcademicYear(row: AcademicYearRow): AcademicYear {
   return {
@@ -62,6 +71,7 @@ function toTerm(row: TermRow): TermSummary {
     startYear: row.start_year,
     academicYearLabel: academicYearLabel(row.start_year),
     isCurrent: row.is_current,
+    startsOn: toStartsOn(row.starts_on),
   };
 }
 
@@ -104,7 +114,8 @@ export async function createTerm(input: {
     values (${input.academicYearId}, ${input.half})
     returning id, half, academic_year_id,
       ${academicYear.startYear}::int as start_year,
-      false as is_current
+      false as is_current,
+      null::date as starts_on
   `;
   return toTerm(rows[0]!);
 }
@@ -119,7 +130,7 @@ export async function listTermsOverview(): Promise<TermsOverview> {
     select id, start_year from academic_years order by start_year desc
   `;
   const terms = await sql<TermRow[]>`
-    select t.id, t.half, t.academic_year_id, y.start_year,
+    select t.id, t.half, t.academic_year_id, y.start_year, t.starts_on,
       coalesce(s.current_term_id = t.id, false) as is_current
     from terms t
     join academic_years y on y.id = t.academic_year_id
@@ -148,7 +159,7 @@ export async function getTermById(
 ): Promise<TermSummary | null> {
   const sql = getDb();
   const rows = await sql<TermRow[]>`
-    select t.id, t.half, t.academic_year_id, y.start_year,
+    select t.id, t.half, t.academic_year_id, y.start_year, t.starts_on,
       coalesce(s.current_term_id = t.id, false) as is_current
     from terms t
     join academic_years y on y.id = t.academic_year_id
@@ -163,6 +174,24 @@ export async function getTermById(
 export async function getCurrentTerm(): Promise<TermSummary | null> {
   const overview = await listTermsOverview();
   return overview.currentTerm;
+}
+
+/**
+ * 设置或清除学期的教学第 1 周起始日期。
+ * 只接受已校验的 YYYY-MM-DD（或 null）；学期不存在时返回 null。
+ */
+export async function setTermStartsOn(
+  termId: string,
+  startsOn: string | null,
+): Promise<TermSummary | null> {
+  const term = await getTermById(termId);
+  if (!term) return null;
+
+  const sql = getDb();
+  await sql`
+    update terms set starts_on = ${startsOn} where id = ${termId}
+  `;
+  return getTermById(termId);
 }
 
 /**
