@@ -2,6 +2,7 @@ import Link from "next/link";
 import { forbidden, notFound } from "next/navigation";
 
 import { LogoutButton } from "@/components/logout-button";
+import { TimetableSection } from "@/components/timetable-section";
 import { requirePageUser } from "@/lib/auth";
 import { ENROLLMENT_STATUS_LABELS } from "@/lib/enrollment-status";
 import { isUuid } from "@/lib/http";
@@ -9,6 +10,7 @@ import {
   getTeachingClassDetail,
   isTeachingClassTeacher,
 } from "@/lib/teaching-classes";
+import { getTimetable } from "@/lib/timetable";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +30,8 @@ export default async function TeacherTeachingClassPage({
 
   const teachingClass = await getTeachingClassDetail(id);
   if (!teachingClass) notFound();
+
+  const timetable = await getTimetable(id);
 
   return (
     <main className="page wide">
@@ -74,6 +78,15 @@ export default async function TeacherTeachingClassPage({
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <section>
+        <h2>课表</h2>
+        <TimetableSection
+          teachingClassId={teachingClass.id}
+          entries={timetable.entries}
+          conflicts={timetable.conflicts}
+        />
       </section>
 
       <section>
