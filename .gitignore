@@ -18,6 +18,8 @@ dist/
 backups/
 *.sql
 *.dump
+*.sql.gz
+*.dump.gz
 *.xlsx
 # 数据库迁移脚本属于源码，需入库
 !drizzle/**/*.sql

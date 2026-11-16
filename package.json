@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:ops",
+    "test:ops": "node --test tests/ops/*.test.mjs",
     "db:generate": "drizzle-kit generate && node scripts/strip-public-schema.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "account:create": "node scripts/create-account.mjs"
