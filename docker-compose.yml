@@ -1,0 +1,78 @@
+name: student
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-student}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-student}
+    volumes:
+      - student-db-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-student}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-student}
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  # 每日备份：首次启动立即备份一次，之后按 BACKUP_SCHEDULE 运行。
+  # 备份失败会在容器日志里留下 ERROR 行，并让 healthcheck 变为 unhealthy。
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-student}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-student}
+      BACKUP_DIR: /backups
+      BACKUP_OFFSITE_DIR: /offsite
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_SCHEDULE: "${BACKUP_SCHEDULE:-0 3 * * *}"
+    entrypoint: ["/bin/sh", "/scripts/backup-entrypoint.sh"]
+    volumes:
+      - ./backups:/backups
+      - ${BACKUP_OFFSITE_HOST_DIR:-./backups/offsite}:/offsite
+      - ./scripts:/scripts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/scripts/backup-healthcheck.sh"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+    restart: unless-stopped
+
+volumes:
+  student-db-data:
