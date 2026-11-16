@@ -152,13 +152,7 @@ async function createAdministrativeClass(
   return body.administrativeClass;
 }
 
-async function createStudent(input: {
-  studentNumber: string;
-  name: string;
-  administrativeClassId: string;
-  enrollmentStatus?: string;
-  initialPassword?: string;
-}): Promise<Response> {
+async function createStudent(input: Record<string, unknown>): Promise<Response> {
   return api("POST", "/api/admin/students", input, adminCookie);
 }
 
@@ -236,6 +230,248 @@ describe("行政班与学生", () => {
       expect(error).toContain("行政班名称");
       expect(String(error)).not.toContain("duplicate");
       expect(String(error)).not.toContain("constraint");
+    });
+  });
+
+  describe("新建学生", () => {
+    it("建学生时同步建账号：登录名即学号、角色为学生、首登强制改密", async () => {
+      const administrativeClass = await createAdministrativeClass("高一 2 班");
+
+      const response = await createStudent({
+        studentNumber: "s2025001",
+        name: "张三",
+        administrativeClassId: administrativeClass.id,
+        enrollmentStatus: "enrolled",
+        initialPassword: "初始密码1234",
+      });
+
+      expect(response.status).toBe(201);
+      const raw = await response.text();
+      expect(raw).not.toContain("$argon2");
+      expect(raw).not.toContain("初始密码1234");
+
+      const body = JSON.parse(raw) as {
+        student: {
+          id: string;
+          studentNumber: string;
+          name: string;
+          enrollmentStatus: string;
+          administrativeClass: { id: string; name: string };
+        };
+      };
+      expect(body.student).toMatchObject({
+        studentNumber: "s2025001",
+        name: "张三",
+        enrollmentStatus: "enrolled",
+        administrativeClass: { id: administrativeClass.id, name: "高一 2 班" },
+      });
+
+      const rows = await queryRows<{
+        role: string;
+        must_change_password: boolean;
+        password_hash: string;
+        account_id: string;
+        student_account_id: string;
+      }>(
+        app.schema!,
+        `select a.role, a.must_change_password, a.password_hash, a.id as account_id,
+                s.account_id as student_account_id
+         from students s join accounts a on a.id = s.account_id
+         where s.student_number = $1`,
+        ["s2025001"],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.role).toBe("student");
+      expect(rows[0]!.must_change_password).toBe(true);
+      expect(rows[0]!.password_hash.startsWith("$argon2id$")).toBe(true);
+      expect(rows[0]!.student_account_id).toBe(rows[0]!.account_id);
+
+      const firstLogin = await login("s2025001", "初始密码1234");
+      expect(firstLogin.response.status).toBe(200);
+      expect(String(firstLogin.body.redirectTo)).toContain("/change-password");
+    });
+
+    it("学号重复时返回可读错误，且不产生第二个学生或账号", async () => {
+      const administrativeClass = await createAdministrativeClass("高一 4 班");
+      const first = await createStudent({
+        studentNumber: "s2025010",
+        name: "重复甲",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      expect(first.status).toBe(201);
+
+      const duplicate = await createStudent({
+        studentNumber: "s2025010",
+        name: "重复乙",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "另一组密码123",
+      });
+
+      expect(duplicate.status).toBe(409);
+      const error = ((await duplicate.json()) as Json).error;
+      expect(error).toContain("学号");
+      expect(String(error)).not.toContain("duplicate");
+      expect(String(error)).not.toContain("constraint");
+
+      const students = await queryRows<{ count: number }>(
+        app.schema!,
+        "select count(*)::int as count from students where student_number = $1",
+        ["s2025010"],
+      );
+      expect(students[0]!.count).toBe(1);
+
+      const accounts = await queryRows<{ count: number }>(
+        app.schema!,
+        "select count(*)::int as count from accounts where login_name = $1",
+        ["s2025010"],
+      );
+      expect(accounts[0]!.count).toBe(1);
+
+      const nameRows = await queryRows<{ name: string }>(
+        app.schema!,
+        "select name from students where student_number = $1",
+        ["s2025010"],
+      );
+      expect(nameRows[0]!.name).toBe("重复甲");
+    });
+
+    it("学号已有学生账号时只建立关联，不改动其密码", async () => {
+      // 先用 #3 的账号接口预建同名账号，并走完首登改密。
+      const activatedCookie = await activateAccount({
+        loginName: "s2025020",
+        displayName: "李四",
+        role: "student",
+        initialPassword: "初始密码1234",
+        newPassword: "已改密码45678",
+      });
+      expect(activatedCookie).not.toBe("");
+
+      const administrativeClass = await createAdministrativeClass("高一 5 班");
+
+      const response = await createStudent({
+        studentNumber: "s2025020",
+        name: "李四",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "不该生效的密码123",
+      });
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as {
+        student: { studentNumber: string; enrollmentStatus: string };
+      };
+      expect(body.student).toMatchObject({
+        studentNumber: "s2025020",
+        enrollmentStatus: "enrolled",
+      });
+
+      const accounts = await queryRows<{ count: number; must_change_password: boolean }>(
+        app.schema!,
+        `select count(*)::int as count,
+                bool_and(must_change_password) as must_change_password
+         from accounts where login_name = $1`,
+        ["s2025020"],
+      );
+      expect(accounts[0]!.count).toBe(1);
+      expect(accounts[0]!.must_change_password).toBe(false);
+
+      const oldPassword = await login("s2025020", "已改密码45678");
+      expect(oldPassword.response.status).toBe(200);
+      expect(oldPassword.body.redirectTo).toBe("/student");
+
+      const ignoredPassword = await login("s2025020", "不该生效的密码");
+      expect(ignoredPassword.response.status).toBe(401);
+    });
+
+    it("账号不存在时未设置初始密码、行政班不存在、学籍状态非法均返回可读错误", async () => {
+      const administrativeClass = await createAdministrativeClass("高一 6 班");
+
+      const missingPassword = await createStudent({
+        studentNumber: "s2025030",
+        name: "缺密码",
+        administrativeClassId: administrativeClass.id,
+      });
+      expect(missingPassword.status).toBe(400);
+      expect(((await missingPassword.json()) as Json).error).toContain("初始密码");
+
+      const missingClass = await createStudent({
+        studentNumber: "s2025031",
+        name: "缺行政班",
+        administrativeClassId: "00000000-0000-4000-8000-000000000000",
+        initialPassword: "初始密码1234",
+      });
+      expect(missingClass.status).toBe(400);
+      expect(((await missingClass.json()) as Json).error).toContain("行政班");
+
+      const badStatus = await createStudent({
+        studentNumber: "s2025032",
+        name: "状态非法",
+        administrativeClassId: administrativeClass.id,
+        enrollmentStatus: "退学",
+        initialPassword: "初始密码1234",
+      });
+      expect(badStatus.status).toBe(400);
+      expect(((await badStatus.json()) as Json).error).toContain("学籍状态");
+
+      // 同名登录名已是教师账号：不能把教师账号当成学生关联。
+      await createAccount({
+        loginName: "t2025033",
+        displayName: "教师占号",
+        role: "teacher",
+        password: "初始密码1234",
+      });
+      const roleConflict = await createStudent({
+        studentNumber: "t2025033",
+        name: "冒名学生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      expect(roleConflict.status).toBe(409);
+      expect(((await roleConflict.json()) as Json).error).toContain("账号");
+
+      const students = await queryRows<{ count: number }>(
+        app.schema!,
+        "select count(*)::int as count from students where student_number in ('s2025030', 's2025031', 's2025032', 't2025033')",
+      );
+      expect(students[0]!.count).toBe(0);
+    });
+
+    it("不收集身份证号、手机号、生日等敏感字段", async () => {
+      const administrativeClass = await createAdministrativeClass("高一 7 班");
+
+      const response = await createStudent({
+        studentNumber: "s2025040",
+        name: "王五",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+        idCard: "110101200001011234",
+        phone: "13800000000",
+        birthday: "2000-01-01",
+      });
+      expect(response.status).toBe(201);
+
+      const raw = await response.text();
+      expect(raw).not.toContain("110101200001011234");
+      expect(raw).not.toContain("13800000000");
+      expect(raw).not.toContain("2000-01-01");
+
+      const columns = await queryRows<{ column_name: string }>(
+        app.schema!,
+        `select column_name from information_schema.columns
+         where table_schema = $1 and table_name = 'students'
+         order by column_name`,
+        [app.schema!],
+      );
+      const names = columns.map((column) => column.column_name);
+      expect(names).toEqual([
+        "account_id",
+        "administrative_class_id",
+        "created_at",
+        "enrollment_status",
+        "id",
+        "name",
+        "student_number",
+        "updated_at",
+      ]);
     });
   });
 });
