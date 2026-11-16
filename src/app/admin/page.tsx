@@ -29,6 +29,10 @@ export default async function AdminPage() {
           </p>
           <p>
             <Link href="/admin/terms">学年与学期</Link>
+            {" · "}
+            <Link href="/admin/courses">课程管理</Link>
+            {" · "}
+            <Link href="/admin/teaching-classes">教学班管理</Link>
           </p>
         </div>
         <div className="header-actions">

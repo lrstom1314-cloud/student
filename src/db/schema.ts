@@ -4,8 +4,10 @@ import {
   check,
   index,
   integer,
+  numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -189,4 +191,86 @@ export const termSettings = pgTable(
       .defaultNow(),
   },
   (table) => [check("term_settings_singleton", sql`${table.id} = 'singleton'`)],
+);
+
+/**
+ * 课程：一门学科的静态定义，跨学期复用。名称唯一，避免同一门课被重复建模。
+ * 学分与课时至少填一项；学时口径不同，因此分成两列而不是一个含义模糊的数字。
+ */
+export const courses = pgTable("courses", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  credits: numeric("credits", { precision: 4, scale: 1 }),
+  hours: integer("hours"),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * 教学班：某学期由一位教师开设的一门课程。
+ * 同一学期同一课程可以开多个教学班，因此三者之间不设唯一约束。
+ */
+export const teachingClasses = pgTable(
+  "teaching_classes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    termId: uuid("term_id")
+      .notNull()
+      .references(() => terms.id, { onDelete: "restrict" }),
+    courseId: uuid("course_id")
+      .notNull()
+      .references(() => courses.id, { onDelete: "restrict" }),
+    teacherAccountId: uuid("teacher_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    displayName: text("display_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("teaching_classes_term_id_idx").on(table.termId),
+    index("teaching_classes_course_id_idx").on(table.courseId),
+    index("teaching_classes_teacher_account_id_idx").on(table.teacherAccountId),
+  ],
+);
+
+/**
+ * 教学班学生名单：教学班与学生的多对多关联，记录加入来源。
+ * 名单是组建时的快照：学籍状态随后变化不会自动同步进已存在的行。
+ */
+export const teachingClassStudentSource = pgEnum(
+  "teaching_class_student_source",
+  ["whole_class", "manual"],
+);
+
+export type TeachingClassStudentSource =
+  (typeof teachingClassStudentSource.enumValues)[number];
+
+export const teachingClassStudents = pgTable(
+  "teaching_class_students",
+  {
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    source: teachingClassStudentSource("source").notNull(),
+    addedAt: timestamp("added_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teachingClassId, table.studentId] }),
+    index("teaching_class_students_student_id_idx").on(table.studentId),
+  ],
 );
