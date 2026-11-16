@@ -56,7 +56,7 @@ export default async function TeacherTeachingClassesPage() {
                 <td>{teachingClass.studentCount}</td>
                 <td>
                   <a href={`/teacher/teaching-classes/${teachingClass.id}`}>
-                    查看名单
+                    课表与名单
                   </a>
                 </td>
               </tr>
