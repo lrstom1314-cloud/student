@@ -1,3 +1,5 @@
+import type { Sql, TransactionSql } from "postgres";
+
 import { getDb } from "@/db";
 import type { WeekParity } from "@/db/schema";
 import {
@@ -28,12 +30,12 @@ export type TimetableEntry = {
   updatedAt: string;
 };
 
-export type ConflictReason = "teacher" | "classroom";
+export type ConflictReason = "teacher" | "classroom" | "same_teaching_class";
 
 export type TimetableConflict = {
   /** 本教学班的课表条目。 */
   entryId: string;
-  /** 与之冲突的其它教学班条目。 */
+  /** 与之冲突的条目；同一教学班内部的重叠会指向班内的另一条记录。 */
   conflictingEntryId: string;
   reasons: ConflictReason[];
   conflictingTeachingClass: { id: string; displayName: string };
@@ -76,7 +78,7 @@ type EntryRow = {
 };
 
 type ConflictRow = {
-  entry_id: string;
+  entry_id: string | null;
   conflicting_entry_id: string;
   conflicting_tc_id: string;
   conflicting_tc_display_name: string;
@@ -87,6 +89,7 @@ type ConflictRow = {
   end_week: number;
   week_parity: WeekParity;
   classroom: string;
+  same_teaching_class: boolean;
   same_teacher: boolean;
   same_classroom: boolean;
 };
@@ -115,44 +118,67 @@ function toEntry(row: EntryRow): TimetableEntry {
 }
 
 /**
- * 冲突判定：只与**同一学期、其它教学班**的条目比较。
- * 星期相同、节次区间相交、周次区间相交、单双周兼容，且同教师或同教室名。
+ * 冲突判定：与同一学期内会落在同一时间的其它条目比较。
+ *
+ * - 星期相同、节次区间相交、周次区间相交（只相接不算）、单双周兼容；
+ * - 命中「同一教师」「同一教室名」任意一条即冲突；
+ * - 同一教学班内部的重叠一律算冲突：同一时间排两门课必然是录入错误。
+ *
  * 单周 vs 双周永远不落在同一周，因此不冲突；二者与「每周」都冲突。
+ * $1 教学班，$2 要排除的条目（修改时排除自身，新增时为 null），
+ * $3..$9 候选条目的星期、起止节次、起止周、单双周、教室名；
+ * $10 被检查的条目 id（列表展示用，新增时为 null）。
  */
 const CONFLICT_SELECT = `
-  select e1.id as entry_id,
+  select $10::uuid as entry_id,
     e2.id as conflicting_entry_id,
     tc2.id as conflicting_tc_id,
     tc2.display_name as conflicting_tc_display_name,
     e2.weekday, e2.start_period, e2.end_period,
     e2.start_week, e2.end_week, e2.week_parity, e2.classroom,
+    (tc2.id = tc1.id) as same_teaching_class,
     (tc2.teacher_account_id = tc1.teacher_account_id) as same_teacher,
-    (lower(btrim(e2.classroom)) = lower(btrim(e1.classroom))) as same_classroom
-  from timetable_entries e1
-  join teaching_classes tc1 on tc1.id = e1.teaching_class_id
-  join teaching_classes tc2
-    on tc2.term_id = tc1.term_id and tc2.id <> tc1.id
-  join timetable_entries e2 on e2.teaching_class_id = tc2.id
-  where e1.teaching_class_id = $1
-    and e1.weekday = e2.weekday
-    and e1.start_period <= e2.end_period
-    and e2.start_period <= e1.end_period
-    and e1.start_week <= e2.end_week
-    and e2.start_week <= e1.end_week
+    (lower(btrim(e2.classroom)) = lower(btrim($9::text))) as same_classroom
+  from teaching_classes tc1
+  join timetable_entries e2 on true
+  join teaching_classes tc2 on tc2.id = e2.teaching_class_id
+  where tc1.id = $1
+    and tc2.term_id = tc1.term_id
+    and ($2::uuid is null or e2.id <> $2::uuid)
+    and e2.weekday = $3
+    and $4 <= e2.end_period and e2.start_period <= $5
+    and $6 <= e2.end_week and e2.start_week <= $7
     and (
-      e1.week_parity = 'every'
-      or e2.week_parity = 'every'
-      or e1.week_parity = e2.week_parity
+      $8::text = 'every'
+      or e2.week_parity::text = 'every'
+      or e2.week_parity::text = $8::text
     )
     and (
       tc2.teacher_account_id = tc1.teacher_account_id
-      or lower(btrim(e1.classroom)) = lower(btrim(e2.classroom))
+      or lower(btrim(e2.classroom)) = lower(btrim($9::text))
     )
-  order by e1.weekday, e1.start_period, e1.id,
-    tc2.display_name, e2.start_period, e2.id
+  order by e2.weekday, e2.start_period, e2.end_period, e2.id
 `;
 
 function toConflict(row: ConflictRow): TimetableConflict {
+  if (row.same_teaching_class) {
+    return {
+      entryId: row.entry_id!,
+      conflictingEntryId: row.conflicting_entry_id,
+      reasons: ["same_teaching_class"],
+      conflictingTeachingClass: {
+        id: row.conflicting_tc_id,
+        displayName: row.conflicting_tc_display_name,
+      },
+      message:
+        `与本教学班「${row.conflicting_tc_display_name}」的另一条课表冲突：` +
+        `同一教学班在同一时间排了两条课表；` +
+        `对方时间：${weekdayLabel(row.weekday)} ${periodLabel(row.start_period, row.end_period)}，` +
+        `${weekLabel(row.start_week, row.end_week, row.week_parity)}，` +
+        `教室 ${row.classroom}。`,
+    };
+  }
+
   const reasons: ConflictReason[] = [];
   if (row.same_teacher) reasons.push("teacher");
   if (row.same_classroom) reasons.push("classroom");
@@ -171,7 +197,7 @@ function toConflict(row: ConflictRow): TimetableConflict {
     `教室 ${row.classroom}。`;
 
   return {
-    entryId: row.entry_id,
+    entryId: row.entry_id!,
     conflictingEntryId: row.conflicting_entry_id,
     reasons,
     conflictingTeachingClass: {
@@ -274,18 +300,44 @@ export function parseTimetableInput(
   };
 }
 
-export async function findTimetableEntry(
-  teachingClassId: string,
-  entryId: string,
-): Promise<TimetableEntry | null> {
-  const sql = getDb();
-  const rows = await sql.unsafe<EntryRow[]>(
-    `select ${ENTRY_COLUMNS} from timetable_entries
-     where id = $1 and teaching_class_id = $2 limit 1`,
-    [entryId, teachingClassId],
-  );
-  const row = rows[0];
-  return row ? toEntry(row) : null;
+function inputOfRow(row: EntryRow): TimetableInput {
+  return {
+    weekday: row.weekday,
+    startPeriod: row.start_period,
+    endPeriod: row.end_period,
+    startWeek: row.start_week,
+    endWeek: row.end_week,
+    weekParity: row.week_parity,
+    classroom: row.classroom,
+  };
+}
+
+/**
+ * 用候选条目的值查冲突，不写库。新增时 entryId 为 null，
+ * 修改时排除自身，避免自己与自己冲突。
+ */
+async function queryConflicts(
+  client: Sql | TransactionSql,
+  input: {
+    teachingClassId: string;
+    values: TimetableInput;
+    /** 新增时为 null；修改时排除自身。 */
+    entryId: string | null;
+  },
+): Promise<TimetableConflict[]> {
+  const rows = await client.unsafe<ConflictRow[]>(CONFLICT_SELECT, [
+    input.teachingClassId,
+    input.entryId,
+    input.values.weekday,
+    input.values.startPeriod,
+    input.values.endPeriod,
+    input.values.startWeek,
+    input.values.endWeek,
+    input.values.weekParity,
+    input.values.classroom,
+    input.entryId,
+  ]);
+  return rows.map(toConflict);
 }
 
 /** 教学班的课表与当前所有冲突警告。删除条目后警告自然消失。 */
@@ -293,100 +345,96 @@ export async function getTimetable(
   teachingClassId: string,
 ): Promise<Timetable> {
   const sql = getDb();
-  const [entries, conflictRows] = await Promise.all([
-    sql.unsafe<EntryRow[]>(
-      `select ${ENTRY_COLUMNS} from timetable_entries
-       where teaching_class_id = $1
-       order by weekday, start_period, end_period, id`,
-      [teachingClassId],
+  const entries = await sql.unsafe<EntryRow[]>(
+    `select ${ENTRY_COLUMNS} from timetable_entries
+     where teaching_class_id = $1
+     order by weekday, start_period, end_period, id`,
+    [teachingClassId],
+  );
+
+  const conflictsByEntry = await Promise.all(
+    entries.map((row) =>
+      queryConflicts(sql, {
+        teachingClassId,
+        values: inputOfRow(row),
+        entryId: row.id,
+      }),
     ),
-    sql.unsafe<ConflictRow[]>(CONFLICT_SELECT, [teachingClassId]),
-  ]);
+  );
 
   return {
     entries: entries.map(toEntry),
-    conflicts: conflictRows.map(toConflict),
+    conflicts: conflictsByEntry.flat(),
   };
-}
-
-export async function entryConflicts(
-  teachingClassId: string,
-  entryId: string,
-): Promise<TimetableConflict[]> {
-  const timetable = await getTimetable(teachingClassId);
-  return timetable.conflicts.filter((conflict) => conflict.entryId === entryId);
 }
 
 export type SaveEntryResult =
   | { ok: true; entry: TimetableEntry; conflicts: TimetableConflict[] }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /** 409 时带上冲突详情，前端据此展示「确认冲突 → 再保存」。 */
+      conflicts?: TimetableConflict[];
+    };
 
-/**
- * 保存条目的公共收尾：写入后立刻重算冲突。
- * 请求显式确认且有冲突时，记录「已确认冲突」的时间；否则清空确认痕迹。
- */
-async function finalizeEntry(input: {
-  teachingClassId: string;
-  entryId: string;
-  acknowledgeConflicts: boolean;
-}): Promise<SaveEntryResult> {
-  const conflicts = await entryConflicts(
-    input.teachingClassId,
-    input.entryId,
-  );
-
-  const sql = getDb();
-  if (input.acknowledgeConflicts && conflicts.length > 0) {
-    await sql`
-      update timetable_entries
-      set conflict_acknowledged_at = now()
-      where id = ${input.entryId}
-    `;
-  } else if (!input.acknowledgeConflicts) {
-    await sql`
-      update timetable_entries
-      set conflict_acknowledged_at = null
-      where id = ${input.entryId}
-    `;
-  }
-
-  const entry = await findTimetableEntry(
-    input.teachingClassId,
-    input.entryId,
-  );
-  if (!entry) {
-    return { ok: false, status: 404, error: "课表条目不存在。" };
-  }
-  return { ok: true, entry, conflicts };
+function conflictRejection(conflicts: TimetableConflict[]): SaveEntryResult {
+  return {
+    ok: false,
+    status: 409,
+    error: `发现 ${conflicts.length} 处课表时间冲突，尚未保存。请核对冲突后确认保存。`,
+    conflicts,
+  };
 }
 
+/**
+ * 添加课表条目：先判定冲突，再决定是否落库。
+ * 存在冲突且请求未显式确认时返回 409，数据库不留下任何行；
+ * 带上 acknowledgeConflicts: true 才写入，并把「已确认冲突」的时间记在条目上。
+ */
 export async function createTimetableEntry(input: {
   teachingClassId: string;
   values: TimetableInput;
   acknowledgeConflicts: boolean;
 }): Promise<SaveEntryResult> {
   const sql = getDb();
-  const rows = await sql<{ id: string }[]>`
-    insert into timetable_entries (
-      teaching_class_id, weekday, start_period, end_period,
-      start_week, end_week, week_parity, classroom
-    )
-    values (
-      ${input.teachingClassId}, ${input.values.weekday},
-      ${input.values.startPeriod}, ${input.values.endPeriod},
-      ${input.values.startWeek}, ${input.values.endWeek},
-      ${input.values.weekParity}, ${input.values.classroom}
-    )
-    returning id
-  `;
+  return sql.begin<SaveEntryResult>(async (tx) => {
+    const conflicts = await queryConflicts(tx, {
+      teachingClassId: input.teachingClassId,
+      values: input.values,
+      entryId: null,
+    });
+    if (conflicts.length > 0 && !input.acknowledgeConflicts) {
+      return conflictRejection(conflicts);
+    }
 
-  return finalizeEntry({
-    teachingClassId: input.teachingClassId,
-    entryId: rows[0]!.id,
-    acknowledgeConflicts: input.acknowledgeConflicts,
+    const rows = await tx<EntryRow[]>`
+      insert into timetable_entries (
+        teaching_class_id, weekday, start_period, end_period,
+        start_week, end_week, week_parity, classroom,
+        conflict_acknowledged_at
+      )
+      values (
+        ${input.teachingClassId}, ${input.values.weekday},
+        ${input.values.startPeriod}, ${input.values.endPeriod},
+        ${input.values.startWeek}, ${input.values.endWeek},
+        ${input.values.weekParity}, ${input.values.classroom},
+        ${conflicts.length > 0 ? new Date() : null}
+      )
+      returning *
+    `;
+    return {
+      ok: true,
+      entry: toEntry(rows[0]!),
+      conflicts,
+    };
   });
 }
 
+/**
+ * 修改课表条目：整条替换。与新增同样「先判定、后落库」：
+ * 未确认的冲突修改返回 409，原条目保持不动。
+ */
 export async function updateTimetableEntry(input: {
   teachingClassId: string;
   entryId: string;
@@ -394,29 +442,46 @@ export async function updateTimetableEntry(input: {
   acknowledgeConflicts: boolean;
 }): Promise<SaveEntryResult> {
   const sql = getDb();
-  const rows = await sql<{ id: string }[]>`
-    update timetable_entries
-    set weekday = ${input.values.weekday},
-      start_period = ${input.values.startPeriod},
-      end_period = ${input.values.endPeriod},
-      start_week = ${input.values.startWeek},
-      end_week = ${input.values.endWeek},
-      week_parity = ${input.values.weekParity},
-      classroom = ${input.values.classroom},
-      conflict_acknowledged_at = null,
-      updated_at = now()
-    where id = ${input.entryId}
-      and teaching_class_id = ${input.teachingClassId}
-    returning id
-  `;
-  if (rows.length === 0) {
-    return { ok: false, status: 404, error: "课表条目不存在。" };
-  }
+  return sql.begin<SaveEntryResult>(async (tx) => {
+    const existing = await tx<{ id: string }[]>`
+      select id from timetable_entries
+      where id = ${input.entryId}
+        and teaching_class_id = ${input.teachingClassId}
+      for update
+    `;
+    if (existing.length === 0) {
+      return { ok: false, status: 404, error: "课表条目不存在。" };
+    }
 
-  return finalizeEntry({
-    teachingClassId: input.teachingClassId,
-    entryId: input.entryId,
-    acknowledgeConflicts: input.acknowledgeConflicts,
+    const conflicts = await queryConflicts(tx, {
+      teachingClassId: input.teachingClassId,
+      values: input.values,
+      entryId: input.entryId,
+    });
+    if (conflicts.length > 0 && !input.acknowledgeConflicts) {
+      return conflictRejection(conflicts);
+    }
+
+    const rows = await tx<EntryRow[]>`
+      update timetable_entries
+      set weekday = ${input.values.weekday},
+        start_period = ${input.values.startPeriod},
+        end_period = ${input.values.endPeriod},
+        start_week = ${input.values.startWeek},
+        end_week = ${input.values.endWeek},
+        week_parity = ${input.values.weekParity},
+        classroom = ${input.values.classroom},
+        conflict_acknowledged_at = ${conflicts.length > 0 ? new Date() : null},
+        updated_at = now()
+      where id = ${input.entryId}
+        and teaching_class_id = ${input.teachingClassId}
+      returning *
+    `;
+    return {
+      ok: true,
+      entry: toEntry(rows[0]!),
+      conflicts,
+    };
   });
 }
 

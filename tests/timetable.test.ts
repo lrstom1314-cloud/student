@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestApp, type TestApp } from "./support/app";
 import { queryRows } from "./support/db";
 import { databaseUrl, ROOT } from "./support/env";
+import { loginCookie } from "./support/login";
 
 const ADMIN_LOGIN = "admin01";
 const ADMIN_PASSWORD = "管理员密码123";
@@ -83,12 +84,6 @@ async function api(
   });
 }
 
-function sessionCookie(response: Response): string {
-  const raw = response.headers.get("set-cookie");
-  if (!raw) return "";
-  return raw.split(";")[0] ?? "";
-}
-
 function bootstrapAccount(input: {
   loginName: string;
   displayName: string;
@@ -127,14 +122,9 @@ function bootstrapAccount(input: {
   }
 }
 
-async function login(loginName: string, password: string): Promise<string> {
-  const response = await api("POST", "/api/auth/login", {
-    loginName,
-    password,
-  });
-  expect(response.status).toBe(200);
-  return sessionCookie(response);
-}
+/** 登录逻辑集中在 tests/support/login.ts，这里只固定本文件的 baseUrl。 */
+const login = (loginName: string, password: string): Promise<string> =>
+  loginCookie(app.baseUrl, loginName, password);
 
 async function errorOf(response: Response): Promise<string> {
   const body = (await response.json()) as { error?: unknown };
@@ -181,6 +171,31 @@ async function createEntryOk(
     entry: EntryJson;
     conflicts: ConflictJson[];
   };
+}
+
+/** 保存前判定冲突：未带确认标志时必须是 409，且响应里带完整的冲突详情。 */
+async function createEntryRejected(
+  teachingClassId: string,
+  body: Json,
+  cookie: string = teacherACookie,
+): Promise<{ error: string; conflicts: ConflictJson[] }> {
+  const response = await createEntry(teachingClassId, body, cookie);
+  expect(response.status).toBe(409);
+  const payload = (await response.json()) as {
+    error?: unknown;
+    conflicts?: unknown;
+  };
+  expect(typeof payload.error).toBe("string");
+  expect(Array.isArray(payload.conflicts)).toBe(true);
+  return payload as { error: string; conflicts: ConflictJson[] };
+}
+
+async function entryCount(): Promise<number> {
+  const rows = await queryRows<{ count: number }>(
+    app.schema!,
+    "select count(*)::int as count from timetable_entries",
+  );
+  return rows[0]!.count;
 }
 
 async function listTimetable(
@@ -382,13 +397,16 @@ describe("课表录入与冲突告警", () => {
       ]);
     });
 
-    it("同教师的不同教学班时间重叠时返回警告，且仍然保存成功", async () => {
+    it("同教师的不同教学班时间重叠时先返回 409 且不落库，确认后才保存", async () => {
       const body = entryBody({ classroom: "教学楼 B202" });
-      const { entry, conflicts } = await createEntryOk(ids.tcA2, body);
-      expect(conflicts).toHaveLength(1);
-      const conflict = conflicts[0]!;
+      const before = await entryCount();
+
+      const blocked = await createEntryRejected(ids.tcA2, body);
+      expect(blocked.error).toContain("冲突");
+      expect(blocked.error).toContain("未保存");
+      expect(blocked.conflicts).toHaveLength(1);
+      const conflict = blocked.conflicts[0]!;
       expect(conflict).toMatchObject({
-        entryId: entry.id,
         reasons: ["teacher"],
         conflictingTeachingClass: {
           id: ids.tcA1,
@@ -398,38 +416,48 @@ describe("课表录入与冲突告警", () => {
       expect(conflict.message).toContain("高二 1 班 高等数学");
       expect(conflict.message).toContain("同一教师");
 
-      // 警告不阻塞保存：条目确实落库，并在双方列表里互相可见。
+      // 未确认的冲突不落库：条目数与列表都没有变化。
+      expect(await entryCount()).toBe(before);
+      const untouched = await listTimetable(ids.tcA2);
+      expect(untouched.entries).toEqual([]);
+      expect(untouched.conflicts).toEqual([]);
+
+      // 确认后才写入，并把「已确认冲突」的痕迹留在条目上。
+      const { entry, conflicts } = await createEntryOk(ids.tcA2, {
+        ...body,
+        acknowledgeConflicts: true,
+      });
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0]!.conflictingTeachingClass.id).toBe(ids.tcA1);
+      expect(entry.acknowledgedAt).not.toBeNull();
+      expect(await entryCount()).toBe(before + 1);
+
       const saved = await listTimetable(ids.tcA2);
-      expect(saved.entries.map((item) => item.id)).toContain(entry.id);
+      expect(saved.entries.map((item) => item.id)).toEqual([entry.id]);
       expect(saved.conflicts).toHaveLength(1);
 
       const other = await listTimetable(ids.tcA1);
       expect(other.conflicts).toHaveLength(1);
       expect(other.conflicts[0]!.conflictingTeachingClass.id).toBe(ids.tcA2);
-
-      expect(
-        (
-          await queryRows<{ count: number }>(
-            app.schema!,
-            "select count(*)::int as count from timetable_entries",
-          )
-        )[0]!.count,
-      ).toBe(2);
     });
 
-    it("同一教室名的不同教学班时间重叠时返回警告，不同教师的课不会被判为教师冲突", async () => {
-      const { entry, conflicts } = await createEntryOk(
+    it("同一教室名的不同教学班时间重叠时先提示冲突，确认后可保存；不同教师的课不会被判为教师冲突", async () => {
+      const body = entryBody({ classroom: "教学楼 A101" });
+      const blocked = await createEntryRejected(ids.tcB1, body, teacherBCookie);
+      expect(blocked.conflicts).toHaveLength(1);
+      const conflict = blocked.conflicts[0]!;
+      expect(conflict.reasons).toEqual(["classroom"]);
+      expect(conflict.conflictingTeachingClass.id).toBe(ids.tcA1);
+      expect(conflict.message).toContain("同一教室");
+      expect(conflict.message).not.toContain("同一教师");
+      expect((await listTimetable(ids.tcB1, teacherBCookie)).entries).toEqual([]);
+
+      const { conflicts } = await createEntryOk(
         ids.tcB1,
-        entryBody({ classroom: "教学楼 A101" }),
+        { ...body, acknowledgeConflicts: true },
         teacherBCookie,
       );
       expect(conflicts).toHaveLength(1);
-      const conflict = conflicts[0]!;
-      expect(conflict.entryId).toBe(entry.id);
-      expect(conflict.conflictingTeachingClass.id).toBe(ids.tcA1);
-      expect(conflict.reasons).toEqual(["classroom"]);
-      expect(conflict.message).toContain("同一教室");
-      expect(conflict.message).not.toContain("同一教师");
       // 教师乙与教师甲不冲突，与 B202 那间教室也不冲突。
       expect(conflicts.map((item) => item.conflictingTeachingClass.id)).toEqual([
         ids.tcA1,
@@ -463,25 +491,30 @@ describe("课表录入与冲突告警", () => {
       // 教师不同、教室相同，但单周与双周从不落在同一周，因此不冲突。
       expect(even.conflicts).toEqual([]);
 
-      const every = await createEntryOk(
-        ids.tcA1,
-        entryBody({
-          weekday: 3,
-          startPeriod: 5,
-          endPeriod: 6,
-          weekParity: "every",
-          classroom: "实验楼 C303",
-        }),
-      );
-      expect(every.conflicts).toHaveLength(2);
+      const everyBody = entryBody({
+        weekday: 3,
+        startPeriod: 5,
+        endPeriod: 6,
+        weekParity: "every",
+        classroom: "实验楼 C303",
+      });
+      const everyBlocked = await createEntryRejected(ids.tcA1, everyBody);
+      expect(everyBlocked.conflicts).toHaveLength(2);
       expect(
-        every.conflicts
+        everyBlocked.conflicts
           .map((item) => item.conflictingEntryId)
           .sort(),
       ).toEqual([odd.entry.id, even.entry.id].sort());
       expect(
-        every.conflicts.every((item) => item.reasons.includes("classroom")),
+        everyBlocked.conflicts.every((item) => item.reasons.includes("classroom")),
       ).toBe(true);
+
+      const every = await createEntryOk(ids.tcA1, {
+        ...everyBody,
+        acknowledgeConflicts: true,
+      });
+      expect(every.conflicts).toHaveLength(2);
+      expect(every.entry.acknowledgedAt).not.toBeNull();
 
       // 两个单周条目之间仍然冲突（教师与教室都相同）。
       await createEntryOk(
@@ -494,19 +527,26 @@ describe("课表录入与冲突告警", () => {
           classroom: "实验楼 D404",
         }),
       );
+      const oddSameBody = entryBody({
+        weekday: 3,
+        startPeriod: 7,
+        endPeriod: 8,
+        weekParity: "odd",
+        classroom: "实验楼 D404",
+      });
+      const oddSameBlocked = await createEntryRejected(
+        ids.tcB1,
+        oddSameBody,
+        teacherBCookie,
+      );
+      expect(oddSameBlocked.conflicts).toHaveLength(1);
+      expect(oddSameBlocked.conflicts[0]!.reasons).toEqual(["classroom"]);
       const oddSame = await createEntryOk(
         ids.tcB1,
-        entryBody({
-          weekday: 3,
-          startPeriod: 7,
-          endPeriod: 8,
-          weekParity: "odd",
-          classroom: "实验楼 D404",
-        }),
+        { ...oddSameBody, acknowledgeConflicts: true },
         teacherBCookie,
       );
       expect(oddSame.conflicts).toHaveLength(1);
-      expect(oddSame.conflicts[0]!.reasons).toEqual(["classroom"]);
     });
 
     it("节次区间只相接不算冲突，真正相交才算", async () => {
@@ -531,23 +571,49 @@ describe("课表录入与冲突告警", () => {
       );
       expect(adjacent.conflicts).toEqual([]);
 
-      const overlapping = await api(
+      const overlappingBody = entryBody({
+        weekday: 4,
+        startPeriod: 2,
+        endPeriod: 4,
+        classroom: "教学楼 E505",
+      });
+      const overlappingResponse = await api(
         "PATCH",
         entryRoute(ids.tcA2, adjacent.entry.id),
-        entryBody({
-          weekday: 4,
-          startPeriod: 2,
-          endPeriod: 4,
-          classroom: "教学楼 E505",
-        }),
+        overlappingBody,
         teacherACookie,
       );
-      expect(overlapping.status).toBe(200);
-      const body = (await overlapping.json()) as {
+      expect(overlappingResponse.status).toBe(409);
+      const overlapping = (await overlappingResponse.json()) as {
+        error: string;
+        conflicts: ConflictJson[];
+      };
+      expect(overlapping.error).toContain("尚未保存");
+      expect(overlapping.conflicts).toHaveLength(1);
+      expect(overlapping.conflicts[0]!.conflictingEntryId).not.toBe(
+        adjacent.entry.id,
+      );
+      expect(overlapping.conflicts[0]!.reasons).toContain("teacher");
+
+      // 未确认的 PATCH 不落库，原条目保持 3-4 节。
+      const untouched = (await listTimetable(ids.tcA2)).entries.find(
+        (item) => item.id === adjacent.entry.id,
+      )!;
+      expect(untouched).toMatchObject({ startPeriod: 3, endPeriod: 4 });
+
+      const confirmed = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, adjacent.entry.id),
+        { ...overlappingBody, acknowledgeConflicts: true },
+        teacherACookie,
+      );
+      expect(confirmed.status).toBe(200);
+      const body = (await confirmed.json()) as {
         entry: EntryJson;
         conflicts: ConflictJson[];
       };
       expect(body.entry.startPeriod).toBe(2);
+      expect(body.entry.acknowledgedAt).not.toBeNull();
       expect(body.conflicts).toHaveLength(1);
       expect(body.conflicts[0]!.conflictingEntryId).not.toBe(body.entry.id);
       expect(body.conflicts[0]!.reasons).toContain("teacher");
@@ -581,23 +647,45 @@ describe("课表录入与冲突告警", () => {
       // 第 8 周与第 9 周不相交；同教师、同教室也不构成重叠。
       expect(second.conflicts).toEqual([]);
 
-      const overlapping = await api(
+      const overlappingBody = entryBody({
+        weekday: 5,
+        startWeek: 8,
+        endWeek: 16,
+        weekParity: "odd",
+        classroom: "教学楼 F606",
+      });
+      const overlappingResponse = await api(
         "PATCH",
         entryRoute(ids.tcA2, second.entry.id),
-        entryBody({
-          weekday: 5,
-          startWeek: 8,
-          endWeek: 16,
-          weekParity: "odd",
-          classroom: "教学楼 F606",
-        }),
+        overlappingBody,
         teacherACookie,
       );
-      expect(overlapping.status).toBe(200);
-      const body = (await overlapping.json()) as {
+      expect(overlappingResponse.status).toBe(409);
+      const overlapping = (await overlappingResponse.json()) as {
+        error: string;
+        conflicts: ConflictJson[];
+      };
+      expect(overlapping.conflicts).toHaveLength(1);
+      expect(overlapping.conflicts[0]!.conflictingEntryId).toBe(first.entry.id);
+      expect(overlapping.conflicts[0]!.reasons).toEqual(["teacher", "classroom"]);
+
+      const unchanged = (await listTimetable(ids.tcA2)).entries.find(
+        (item) => item.id === second.entry.id,
+      )!;
+      expect(unchanged.startWeek).toBe(9);
+
+      const confirmed = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, second.entry.id),
+        { ...overlappingBody, acknowledgeConflicts: true },
+        teacherACookie,
+      );
+      expect(confirmed.status).toBe(200);
+      const body = (await confirmed.json()) as {
         entry: EntryJson;
         conflicts: ConflictJson[];
       };
+      expect(body.entry.startWeek).toBe(8);
       expect(body.conflicts).toHaveLength(1);
       expect(body.conflicts[0]!.conflictingEntryId).toBe(first.entry.id);
       expect(body.conflicts[0]!.reasons).toEqual(["teacher", "classroom"]);
@@ -610,40 +698,64 @@ describe("课表录入与冲突告警", () => {
       expect(otherTerm.conflicts).toEqual([]);
     });
 
-    it("同一教学班内部的条目不做冲突判定", async () => {
-      const first = await createEntryOk(
-        ids.tcA1,
-        entryBody({
-          weekday: 6,
-          startPeriod: 1,
-          endPeriod: 2,
-          classroom: "教学楼 G707",
-        }),
-      );
-      const second = await createEntryOk(
-        ids.tcA1,
-        entryBody({
-          weekday: 6,
-          startPeriod: 1,
-          endPeriod: 2,
-          classroom: "教学楼 G707",
-        }),
-      );
+    it("同一教学班内部时间重叠也算冲突：先 409 不落库，确认后才保存", async () => {
+      const body = entryBody({
+        weekday: 6,
+        startPeriod: 1,
+        endPeriod: 2,
+        classroom: "教学楼 G707",
+      });
+      const first = await createEntryOk(ids.tcA1, body);
       expect(first.conflicts).toEqual([]);
-      expect(second.conflicts).toEqual([]);
+
+      const before = await entryCount();
+      const blocked = await createEntryRejected(ids.tcA1, body);
+      expect(blocked.error).toContain("冲突");
+      expect(blocked.conflicts).toHaveLength(1);
+      expect(blocked.conflicts[0]).toMatchObject({
+        reasons: ["same_teaching_class"],
+        conflictingEntryId: first.entry.id,
+        conflictingTeachingClass: { id: ids.tcA1 },
+      });
+      expect(blocked.conflicts[0]!.message).toContain("同一教学班");
+      expect(await entryCount()).toBe(before);
 
       const list = await listTimetable(ids.tcA1);
+      expect(list.entries.filter((item) => item.weekday === 6)).toHaveLength(1);
+
+      const second = await createEntryOk(ids.tcA1, {
+        ...body,
+        acknowledgeConflicts: true,
+      });
+      expect(second.conflicts).toHaveLength(1);
+      expect(second.entry.acknowledgedAt).not.toBeNull();
+      expect(await entryCount()).toBe(before + 1);
+
+      // 同一个教学班里只相接不算相交：第 3-4 节与第 1-2 节可以共存。
+      const adjacent = await createEntryOk(
+        ids.tcA1,
+        entryBody({
+          weekday: 6,
+          startPeriod: 3,
+          endPeriod: 4,
+          classroom: "教学楼 G707",
+        }),
+      );
+      expect(adjacent.conflicts).toEqual([]);
+
+      // 班内冲突在列表里对双方各报一次。
+      const after = await listTimetable(ids.tcA1);
       expect(
-        list.entries
-          .filter((item) => item.weekday === 6)
-          .map((item) => item.id)
-          .sort(),
-      ).toEqual([first.entry.id, second.entry.id].sort());
+        after.conflicts.filter((item) => item.entryId === first.entry.id),
+      ).toHaveLength(1);
+      expect(
+        after.conflicts.filter((item) => item.entryId === second.entry.id),
+      ).toHaveLength(1);
     });
   });
 
   describe("确认冲突与增删改", () => {
-    it("保存时显式确认冲突会留下「已确认冲突」的痕迹，之后修改需要重新确认", async () => {
+    it("保存时显式确认冲突会留下「已确认冲突」的痕迹，之后未确认的修改不生效", async () => {
       const base = entryBody({
         weekday: 7,
         startPeriod: 1,
@@ -653,9 +765,18 @@ describe("课表录入与冲突告警", () => {
 
       await createEntryOk(ids.tcA1, base);
 
-      const unconfirmed = await createEntryOk(ids.tcA2, base);
+      // 与 tcA1 同教师、同教室、同时间：未确认时被拒绝，条目根本不存在。
+      const before = await entryCount();
+      const unconfirmed = await createEntryRejected(ids.tcA2, base);
       expect(unconfirmed.conflicts).toHaveLength(1);
-      expect(unconfirmed.entry.acknowledgedAt).toBeNull();
+      expect(await entryCount()).toBe(before);
+
+      const a2 = await createEntryOk(ids.tcA2, {
+        ...base,
+        acknowledgeConflicts: true,
+      });
+      expect(a2.conflicts).toHaveLength(1);
+      expect(a2.entry.acknowledgedAt).not.toBeNull();
 
       // 同教室、不同教师：与两个班都冲突；创建时就确认。
       const confirmed = await createEntryOk(
@@ -675,41 +796,46 @@ describe("课表录入与冲突告警", () => {
           ?.acknowledgedAt,
       ).toBe(confirmed.entry.acknowledgedAt);
 
-      // 未确认的条目仍保留警告；修改并确认后痕迹出现。
-      const pending = await listTimetable(ids.tcA2);
-      const pendingEntry = pending.entries.find(
-        (item) => item.id === unconfirmed.entry.id,
-      )!;
-      expect(pendingEntry.acknowledgedAt).toBeNull();
-      expect(
-        pending.conflicts.filter(
-          (item) => item.entryId === unconfirmed.entry.id,
-        ),
-      ).toHaveLength(2);
-
-      const acknowledged = await api(
-        "PATCH",
-        entryRoute(ids.tcA2, unconfirmed.entry.id),
-        { ...base, acknowledgeConflicts: true },
-        teacherACookie,
-      );
-      expect(acknowledged.status).toBe(200);
-      const acknowledgedBody = (await acknowledged.json()) as {
-        entry: EntryJson;
-        conflicts: ConflictJson[];
-      };
-      expect(acknowledgedBody.conflicts).toHaveLength(2);
-      expect(acknowledgedBody.entry.acknowledgedAt).not.toBeNull();
-
-      // 再次修改但未确认时，确认痕迹被清空，提醒需要重新确认。
-      const reset = await api(
+      // 未确认的修改请求不会清掉已确认的痕迹：条目保持原值。
+      const rejectedPatch = await api(
         "PATCH",
         entryRoute(ids.tcB1, confirmed.entry.id),
         base,
         teacherBCookie,
       );
-      expect(reset.status).toBe(200);
-      expect(((await reset.json()) as { entry: EntryJson }).entry.acknowledgedAt).toBeNull();
+      expect(rejectedPatch.status).toBe(409);
+      const stillAcknowledged = (
+        await listTimetable(ids.tcB1, teacherBCookie)
+      ).entries.find((item) => item.id === confirmed.entry.id)!;
+      expect(stillAcknowledged.acknowledgedAt).toBe(
+        confirmed.entry.acknowledgedAt,
+      );
+      expect(stillAcknowledged).toMatchObject({
+        weekday: 7,
+        startPeriod: 1,
+        endPeriod: 2,
+        classroom: "教学楼 H808",
+      });
+
+      // 改成无冲突的时间后正常保存，并清空确认痕迹。
+      const moved = await api(
+        "PATCH",
+        entryRoute(ids.tcB1, confirmed.entry.id),
+        entryBody({
+          weekday: 7,
+          startPeriod: 3,
+          endPeriod: 4,
+          classroom: "教学楼 H808",
+        }),
+        teacherBCookie,
+      );
+      expect(moved.status).toBe(200);
+      const movedBody = (await moved.json()) as {
+        entry: EntryJson;
+        conflicts: ConflictJson[];
+      };
+      expect(movedBody.conflicts).toEqual([]);
+      expect(movedBody.entry.acknowledgedAt).toBeNull();
     });
 
     it("删除条目后相关警告随之消失", async () => {
@@ -717,21 +843,26 @@ describe("课表录入与冲突告警", () => {
         ids.tcB1,
         entryBody({
           weekday: 6,
-          startPeriod: 3,
-          endPeriod: 4,
+          startPeriod: 5,
+          endPeriod: 6,
           classroom: "教学楼 K909",
         }),
         teacherBCookie,
       );
-      const extra = await createEntryOk(
-        ids.tcA2,
-        entryBody({
-          weekday: 6,
-          startPeriod: 3,
-          endPeriod: 4,
-          classroom: "教学楼 K909",
-        }),
-      );
+      const extraBody = entryBody({
+        weekday: 6,
+        startPeriod: 5,
+        endPeriod: 6,
+        classroom: "教学楼 K909",
+      });
+      const blocked = await createEntryRejected(ids.tcA2, extraBody);
+      expect(blocked.conflicts).toHaveLength(1);
+      expect(blocked.conflicts[0]!.conflictingEntryId).toBe(anchor.entry.id);
+
+      const extra = await createEntryOk(ids.tcA2, {
+        ...extraBody,
+        acknowledgeConflicts: true,
+      });
       expect(extra.conflicts).toHaveLength(1);
       expect(extra.conflicts[0]!.conflictingEntryId).toBe(anchor.entry.id);
 
@@ -773,19 +904,20 @@ describe("课表录入与冲突告警", () => {
       expect(await errorOf(again)).toContain("课表条目");
     });
 
-    it("修改条目后旧警告消失，新时间若冲突会出现新警告", async () => {
+    it("修改条目后旧警告消失；改到冲突时间则先 409，确认后才保存", async () => {
       const thursday = await listTimetable(ids.tcA2);
       const entry = thursday.entries.find((item) => item.weekday === 4)!;
 
+      const freeBody = entryBody({
+        weekday: 4,
+        startPeriod: 3,
+        endPeriod: 4,
+        classroom: "教学楼 E505",
+      });
       const moved = await api(
         "PATCH",
         entryRoute(ids.tcA2, entry.id),
-        entryBody({
-          weekday: 4,
-          startPeriod: 3,
-          endPeriod: 4,
-          classroom: "教学楼 E505",
-        }),
+        freeBody,
         teacherACookie,
       );
       expect(moved.status).toBe(200);
@@ -799,11 +931,50 @@ describe("课表录入与冲突告警", () => {
         classroom: "教学楼 E505",
       });
       expect(movedBody.conflicts).toEqual([]);
+      expect(movedBody.entry.acknowledgedAt).toBeNull();
 
       const list = await listTimetable(ids.tcA2);
       expect(
         list.conflicts.filter((item) => item.entryId === entry.id),
       ).toEqual([]);
+
+      // 再改回与 tcA1 重叠的时间：未确认时不生效。
+      const conflictingBody = entryBody({
+        weekday: 4,
+        startPeriod: 2,
+        endPeriod: 4,
+        classroom: "教学楼 E505",
+      });
+      const blockedResponse = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, entry.id),
+        conflictingBody,
+        teacherACookie,
+      );
+      expect(blockedResponse.status).toBe(409);
+      const blocked = (await blockedResponse.json()) as {
+        error: string;
+        conflicts: ConflictJson[];
+      };
+      expect(blocked.conflicts).toHaveLength(1);
+      const unchanged = (await listTimetable(ids.tcA2)).entries.find(
+        (item) => item.id === entry.id,
+      )!;
+      expect(unchanged.startPeriod).toBe(3);
+
+      const confirmed = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, entry.id),
+        { ...conflictingBody, acknowledgeConflicts: true },
+        teacherACookie,
+      );
+      expect(confirmed.status).toBe(200);
+      const confirmedBody = (await confirmed.json()) as {
+        entry: EntryJson;
+        conflicts: ConflictJson[];
+      };
+      expect(confirmedBody.conflicts).toHaveLength(1);
+      expect(confirmedBody.entry.acknowledgedAt).not.toBeNull();
     });
   });
 
@@ -1070,10 +1241,11 @@ describe("课表录入与冲突告警", () => {
       expect(html).toContain("第 1-16 周");
       expect(html).toContain("每周");
       expect(html).toContain("教学楼 A101");
-      expect(html).toContain("存在冲突（未确认）");
+      expect(html).toContain("已确认冲突");
       expect(html).toContain("当前有");
       expect(html).toContain("同一教师");
       expect(html).toContain("同一教室");
+      expect(html).toContain("保存前会检查冲突");
       expect(html).toContain("添加课表条目");
       expect(html).toContain("单双周");
       expect(html).not.toContain("Internal Server Error");
