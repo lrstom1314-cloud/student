@@ -20,7 +20,11 @@ export function newSchemaName(prefix = "test"): string {
 }
 
 function adminClient() {
-  return postgres(databaseUrl(), { max: 1, connect_timeout: 5 });
+  return postgres(databaseUrl(), {
+    max: 1,
+    connect_timeout: 5,
+    onnotice: false,
+  });
 }
 
 export async function createSchema(schema: string): Promise<void> {
