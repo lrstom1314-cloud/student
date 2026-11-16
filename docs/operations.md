@@ -137,6 +137,11 @@ BACKUP_OFFSITE_HOST_DIR=/mnt/object-storage/student-backups
 > 恢复会覆盖现有数据。先执行一次手动备份，确认 `.last-backup` 为 `ok` 后再动手。
 > 以下命令默认数据库账号与库名都是 `student`；若改过 `POSTGRES_USER` / `POSTGRES_DB`，请相应替换。
 
+> **想少打字**：整份演练已做成向导 —— `bash scripts/wizard-restore-drill.sh`。
+> 它会生成 `.env`、启动服务、引导你造一份最小数据、立即备份，并按 5.1 恢复到临时库、
+> 比对行数、清理现场，最后提示你回填 5.4 的记录表。下面的命令是同一套流程的手工版，
+> 适合排障时逐条执行。
+
 ### 5.1 演练：恢复到临时数据库（不影响线上）
 
 ```sh
