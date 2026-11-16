@@ -9,11 +9,18 @@ import type { TeachingClassSummary } from "@/lib/teaching-classes";
 
 /**
  * 导出内容固定为「最后一次发布的快照」，而不是 student_grades 等实时表。
- * 解锁期间教师继续改分时，导出的文件仍与上一次发布一致，不会漂移。
- * 从未发布过的教学班才回落到实时草稿，并在文件名与首行明确标注「未发布」。
+ * 解锁期间教师继续改分时，导出的文件仍与上一次发布一致，不会漂移；
+ * 此时文件名与首行标注「解锁中·内容为上次发布」，避免接收方误以为是当前正式成绩。
+ * 从未发布过的教学班才回落到实时草稿，并标注「未发布」。
  */
 const DRAFT_NOTICE =
   "未发布：本教学班成绩尚未发布，以下为教师草稿，不是正式成绩。";
+
+const UNLOCKED_NOTICE =
+  "解锁中·内容为上次发布：本教学班成绩已解锁，以下为上一次发布的成绩快照，不是当前正式成绩。";
+
+/** 解锁期间导出时的文件名标注，与首行说明保持一致。 */
+const UNLOCKED_FILENAME_SUFFIX = "（解锁中·内容为上次发布）";
 
 /** 缺考/未录入在导出里显式写成「未录入」，绝不折算成 0 分。 */
 const MISSING = "未录入";
@@ -136,6 +143,7 @@ function assembleCsv(input: {
 async function fromPublication(
   teachingClass: TeachingClassSummary,
   publication: PublicationRow,
+  unlocked: boolean,
 ): Promise<GradeExport> {
   const sql = getDb();
   const [itemRows, overallRows, scoreRows] = await Promise.all([
@@ -186,9 +194,14 @@ async function fromPublication(
 
   return {
     filename: `${sanitizeFilenameBase(
-      `${teachingClass.term.label} ${teachingClass.displayName} 成绩表`,
+      `${teachingClass.term.label} ${teachingClass.displayName} 成绩表` +
+        (unlocked ? UNLOCKED_FILENAME_SUFFIX : ""),
     )}.csv`,
-    content: assembleCsv({ notice: null, items, rows }),
+    content: assembleCsv({
+      notice: unlocked ? UNLOCKED_NOTICE : null,
+      items,
+      rows,
+    }),
     published: true,
     publicationVersion: publication.version,
   };
@@ -236,18 +249,28 @@ export async function buildGradeExport(
   if (!access.ok) return access;
 
   const sql = getDb();
-  const publicationRows = await sql<PublicationRow[]>`
-    select id, version, published_at
-    from grade_publications
-    where teaching_class_id = ${teachingClassId}
-    order by version desc
-    limit 1
-  `;
+  const [publicationRows, stateRows] = await Promise.all([
+    sql<PublicationRow[]>`
+      select id, version, published_at
+      from grade_publications
+      where teaching_class_id = ${teachingClassId}
+      order by version desc
+      limit 1
+    `,
+    sql<{ grade_state: "draft" | "published" }[]>`
+      select grade_state from teaching_classes where id = ${teachingClassId}
+    `,
+  ]);
   const publication = publicationRows[0];
   if (publication) {
+    // 有快照就永远导出快照；grade_state 为 draft 说明正处在解锁期间。
     return {
       ok: true,
-      export: await fromPublication(access.teachingClass, publication),
+      export: await fromPublication(
+        access.teachingClass,
+        publication,
+        stateRows[0]?.grade_state === "draft",
+      ),
     };
   }
 
