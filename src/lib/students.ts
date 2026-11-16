@@ -262,3 +262,19 @@ export async function updateStudent(
   }
   return { ok: true, student: toSummary(row) };
 }
+
+/**
+ * 登录与每次会话校验都读取学生「当前」学籍状态。
+ * 没有学籍记录时返回 null：账号已建但尚未录入学生时保持 #3 的行为。
+ */
+export async function findEnrollmentStatusByAccountId(
+  accountId: string,
+): Promise<EnrollmentStatus | null> {
+  const sql = getDb();
+  const rows = await sql<{ enrollment_status: EnrollmentStatus }[]>`
+    select enrollment_status from students
+    where account_id = ${accountId}
+    limit 1
+  `;
+  return rows[0]?.enrollment_status ?? null;
+}

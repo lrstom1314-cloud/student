@@ -672,4 +672,132 @@ describe("行政班与学生", () => {
       expect(((await missingStudent.json()) as Json).error).toContain("学生");
     });
   });
+
+  describe("学籍状态与登录", () => {
+    it("非在读学生登录被拒绝，提示不泄露具体学籍状态", async () => {
+      const administrativeClass = await createAdministrativeClass("高三 1 班");
+      const cases = [
+        { studentNumber: "s2025201", name: "休学生", status: "suspended", word: "休学" },
+        { studentNumber: "s2025202", name: "转出生", status: "transferred", word: "转出" },
+        { studentNumber: "s2025203", name: "毕业生", status: "graduated", word: "毕业" },
+      ];
+
+      for (const item of cases) {
+        const created = await createStudent({
+          studentNumber: item.studentNumber,
+          name: item.name,
+          administrativeClassId: administrativeClass.id,
+          enrollmentStatus: item.status,
+          initialPassword: "初始密码1234",
+        });
+        expect(created.status).toBe(201);
+      }
+
+      for (const item of cases) {
+        const attempt = await login(item.studentNumber, "初始密码1234");
+        expect(attempt.response.status).toBe(401);
+        expect(attempt.body).toEqual({ error: "登录名或密码错误。" });
+        expect(attempt.cookie).toBe("");
+        expect(JSON.stringify(attempt.body)).not.toContain(item.word);
+      }
+
+      // 提示不能区分原因：与密码错误、账号不存在完全一致。
+      const wrongPassword = await login("s2025201", "错误密码123");
+      expect(wrongPassword.body).toEqual({ error: "登录名或密码错误。" });
+      const missing = await login("s2025299", "初始密码1234");
+      expect(missing.body).toEqual({ error: "登录名或密码错误。" });
+    });
+
+    it("在读学生可以登录", async () => {
+      const administrativeClass = await createAdministrativeClass("高三 2 班");
+      const created = await createStudent({
+        studentNumber: "s2025210",
+        name: "在读生",
+        administrativeClassId: administrativeClass.id,
+        enrollmentStatus: "enrolled",
+        initialPassword: "初始密码1234",
+      });
+      expect(created.status).toBe(201);
+
+      const attempt = await login("s2025210", "初始密码1234");
+      expect(attempt.response.status).toBe(200);
+      expect(attempt.body.redirectTo).toBe(
+        "/change-password?next=%2Fstudent",
+      );
+    });
+
+    it("学籍状态改为非在读后，已登录的会话立即失效", async () => {
+      const administrativeClass = await createAdministrativeClass("高三 6 班");
+      const created = await createStudent({
+        studentNumber: "s2025220",
+        name: "会话生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+      expect(created.status).toBe(201);
+
+      const firstLogin = await login("s2025220", "初始密码1234");
+      const changed = await api(
+        "POST",
+        "/api/auth/password",
+        { currentPassword: "初始密码1234", newPassword: "新密码45678" },
+        firstLogin.cookie,
+      );
+      expect(changed.status).toBe(200);
+      const cookie = sessionCookie(changed);
+
+      const allowed = await page("/student", cookie);
+      expect(allowed.status).toBe(200);
+
+      const suspended = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { enrollmentStatus: "suspended" },
+        adminCookie,
+      );
+      expect(suspended.status).toBe(200);
+
+      const blockedPage = await page("/student", cookie);
+      expect([303, 307, 308]).toContain(blockedPage.status);
+      expect(blockedPage.headers.get("location")).toBe("/login?next=%2Fstudent");
+
+      const blockedLogin = await login("s2025220", "新密码45678");
+      expect(blockedLogin.response.status).toBe(401);
+      expect(blockedLogin.body).toEqual({ error: "登录名或密码错误。" });
+
+      // 恢复在读后可以重新登录。
+      const restored = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { enrollmentStatus: "enrolled" },
+        adminCookie,
+      );
+      expect(restored.status).toBe(200);
+      const allowedAgain = await login("s2025220", "新密码45678");
+      expect(allowedAgain.response.status).toBe(200);
+    });
+
+    it("尚未建立学籍的学生账号仍可登录（保持 #3 行为）", async () => {
+      const cookie = await activateAccount({
+        loginName: "s2025230",
+        displayName: "无学籍学生",
+        role: "student",
+        initialPassword: "初始密码1234",
+        newPassword: "新密码45678",
+      });
+      expect(cookie).not.toBe("");
+
+      const rows = await queryRows<{ count: number }>(
+        app.schema!,
+        "select count(*)::int as count from students where student_number = 's2025230'",
+      );
+      expect(rows[0]!.count).toBe(0);
+
+      const attempt = await login("s2025230", "新密码45678");
+      expect(attempt.response.status).toBe(200);
+      expect(attempt.body.redirectTo).toBe("/student");
+    });
+  });
 });

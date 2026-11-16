@@ -112,9 +112,11 @@ async function findUserByToken(token: string): Promise<SessionUser | null> {
     select a.id, a.login_name, a.display_name, a.role, a.must_change_password
     from sessions s
     join accounts a on a.id = s.account_id
+    left join students st on st.account_id = a.id
     where s.token_hash = ${tokenHash}
       and s.expires_at > now()
       and a.disabled = false
+      and (st.id is null or st.enrollment_status = 'enrolled')
     limit 1
   `;
 
