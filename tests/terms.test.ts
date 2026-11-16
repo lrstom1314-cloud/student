@@ -395,6 +395,49 @@ describe("学年与学期", () => {
     const malformed = await setCurrentTerm("not-a-uuid", true);
     expect(malformed.status).toBe(400);
   });
+
+  it("教师与学生不能创建学年、创建学期或切换当前学期", async () => {
+    const yearId = await academicYearIdOf(2026);
+    const first2025 = await termIdOf(2025, "first");
+    const before = await settingRow();
+
+    for (const cookie of [teacherCookie, studentCookie]) {
+      const year = await createAcademicYear(2099, cookie);
+      expect(year.status).toBe(403);
+      expect(((await year.json()) as { error: string }).error).toBe(
+        "无权访问。",
+      );
+
+      const term = await createTerm(yearId, "second", cookie);
+      expect(term.status).toBe(403);
+
+      const current = await setCurrentTerm(first2025, true, cookie);
+      expect(current.status).toBe(403);
+    }
+
+    const years = await queryRows<{ count: number }>(
+      app.schema!,
+      "select count(*)::int as count from academic_years where start_year = 2099",
+    );
+    expect(years[0]!.count).toBe(0);
+    expect(await settingRow()).toEqual(before);
+  });
+
+  it("未登录调用学年学期写接口返回 401", async () => {
+    const year = await createAcademicYear(2098, "");
+    expect(year.status).toBe(401);
+    expect(((await year.json()) as { error: string }).error).toBe("请先登录。");
+
+    const term = await createTerm(await academicYearIdOf(2026), "second", "");
+    expect(term.status).toBe(401);
+
+    const current = await setCurrentTerm(
+      await termIdOf(2025, "first"),
+      true,
+      "",
+    );
+    expect(current.status).toBe(401);
+  });
 });
 
 type TermsOverviewJson = {
