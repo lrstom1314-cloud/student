@@ -28,6 +28,11 @@ docker compose ps
 - 首次部署还需要创建第一个教务管理员，见 [README 的「创建第一个教务管理员」](../README.md#创建第一个教务管理员)。
 
 数据库数据保存在命名卷 `student-db-data` 中；备份文件保存在宿主机的 `./backups/` 目录。
+首次启动前可先建好目录（Linux 上 Docker 以 root 创建时也可用 `sudo` 调整属主）：
+
+```sh
+mkdir -p backups backups/offsite
+```
 
 ## 2. 环境变量清单
 
