@@ -353,4 +353,116 @@ describe("CSV 批量导入学生", () => {
     expect(html).toContain("休学");
     expect(html).not.toContain("原名生");
   });
+
+  it("逐行处理：单行失败不影响其它行，错误含行号，行政班不存在时绝不自动创建", async () => {
+    await createAdministrativeClass("高二 5 班");
+
+    const csv = [
+      "学号,姓名,行政班,学籍状态",
+      "s2026101,王五,高二 5 班,在读",
+      "s2026102,赵六,不存在的班,在读",
+      "s2026103,钱七,高二 5 班,退学",
+      "s2026105,空行前生,高二 5 班,在读",
+      ",吴十,高二 5 班,在读",
+      "s2026104,孙八,高二 5 班,在读",
+      "",
+      "s2026104,周九,高二 5 班,在读",
+    ].join("\r\n");
+
+    const body = await importBody(await importCsv(csv));
+    expect(body).toMatchObject({ created: 2, updated: 0, failed: 5 });
+
+    expect(rowFor(body, "s2026101")).toMatchObject({
+      line: 2,
+      status: "created",
+    });
+    expect(rowFor(body, "s2026105")).toMatchObject({
+      line: 5,
+      status: "created",
+    });
+
+    const missingClass = rowFor(body, "s2026102");
+    expect(missingClass).toMatchObject({ line: 3, status: "error" });
+    expect(missingClass.message).toContain("第 3 行");
+    expect(missingClass.message).toContain("行政班「不存在的班」不存在");
+
+    const badStatus = rowFor(body, "s2026103");
+    expect(badStatus).toMatchObject({ line: 4, status: "error" });
+    expect(badStatus.message).toContain("第 4 行");
+    expect(badStatus.message).toContain("学籍状态");
+    expect(badStatus.message).toContain("休学");
+    expect(badStatus.message).toContain("毕业");
+
+    const blankNumber = body.rows.find((row) => row.line === 6)!;
+    expect(blankNumber.status).toBe("error");
+    expect(blankNumber.message).toContain("第 6 行");
+    expect(blankNumber.message).toContain("学号");
+
+    // 同一文件内重复学号：两行都判错，且该学号完全没有落库（不产生半截数据）。
+    const duplicateFirst = body.rows.find((row) => row.line === 7)!;
+    const duplicateSecond = body.rows.find((row) => row.line === 9)!;
+    expect(duplicateFirst.status).toBe("error");
+    expect(duplicateSecond.status).toBe("error");
+    expect(duplicateFirst.message).toContain("第 7 行");
+    expect(duplicateFirst.message).toContain("重复出现");
+    expect(duplicateFirst.message).toContain("第 7、9 行");
+    expect(duplicateSecond.message).toContain("第 9 行");
+
+    const created = await queryRows<{ student_number: string }>(
+      app.schema!,
+      `select student_number from students
+       where student_number in ('s2026101', 's2026102', 's2026103', 's2026104', 's2026105')
+       order by student_number`,
+    );
+    expect(created.map((row) => row.student_number)).toEqual([
+      "s2026101",
+      "s2026105",
+    ]);
+
+    const classes = await queryRows<{ count: number }>(
+      app.schema!,
+      "select count(*)::int as count from administrative_classes where name = '不存在的班'",
+    );
+    expect(classes[0]!.count).toBe(0);
+
+    const html = await (await page("/admin/students", adminCookie)).text();
+    expect(html).toContain("王五");
+    expect(html).toContain("空行前生");
+    for (const absent of ["赵六", "钱七", "孙八", "周九", "吴十"]) {
+      expect(html).not.toContain(absent);
+    }
+  });
+
+  it("CSV 不接受密码列：新学生仍使用系统生成的初始密码并强制改密", async () => {
+    await createAdministrativeClass("高二 6 班");
+
+    const body = await importBody(
+      await importCsv(
+        "学号,姓名,行政班,学籍状态,密码\r\n" +
+          "s2026110,密码列生,高二 6 班,在读,CSV里的密码123\r\n",
+      ),
+    );
+    const row = rowFor(body, "s2026110");
+    expect(row.status).toBe("created");
+    expect(row.initialPassword).toBeTruthy();
+    expect(row.initialPassword).not.toBe("CSV里的密码123");
+
+    const providedPassword = await login("s2026110", "CSV里的密码123");
+    expect(providedPassword.response.status).toBe(401);
+
+    const generatedPassword = await login("s2026110", row.initialPassword!);
+    expect(generatedPassword.response.status).toBe(200);
+    expect(String(generatedPassword.body.redirectTo)).toContain("/change-password");
+
+    // 响应与数据库都不应出现明文密码。
+    const raw = JSON.stringify(body);
+    expect(raw).toContain(row.initialPassword!);
+    const hashes = await queryRows<{ password_hash: string }>(
+      app.schema!,
+      "select password_hash from accounts where login_name = 's2026110'",
+    );
+    expect(hashes[0]!.password_hash.startsWith("$argon2id$")).toBe(true);
+    expect(hashes[0]!.password_hash).not.toContain(row.initialPassword!);
+    expect(hashes[0]!.password_hash).not.toContain("CSV里的密码123");
+  });
 });

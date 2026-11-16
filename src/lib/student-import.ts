@@ -305,7 +305,7 @@ export async function importStudentsCsv(text: string): Promise<CsvImportResult> 
       studentNumber: entry.studentNumber,
       name: entry.name,
       status: "error",
-      message: errors.join(" "),
+      message: `第 ${entry.line} 行：${errors.join(" ")}`,
     });
   }
 
