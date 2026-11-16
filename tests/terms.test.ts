@@ -305,6 +305,26 @@ describe("学年与学期", () => {
     expect(anonymous.status).toBe(401);
   });
 
+  it("尚未设置当前学期时，依赖学期的页面给出提示而不是报错", async () => {
+    expect(await currentTermIdFromApi()).toBeNull();
+
+    const pages: [string, string][] = [
+      ["/student", studentCookie],
+      ["/teacher", teacherCookie],
+    ];
+
+    for (const [route, cookie] of pages) {
+      const response = await page(route, cookie);
+      expect(response.status).toBe(200);
+
+      const html = await response.text();
+      expect(html).toContain("尚未设置当前学期");
+      expect(html).toContain("联系教务管理员");
+      expect(html).not.toContain("服务暂时不可用");
+      expect(html).not.toContain("Internal Server Error");
+    }
+  });
+
   it("切换当前学期需要确认，确认后全局只有一个当前学期", async () => {
     const first2025 = await termIdOf(2025, "first");
     const first2026 = await termIdOf(2026, "first");
@@ -437,6 +457,53 @@ describe("学年与学期", () => {
       "",
     );
     expect(current.status).toBe(401);
+  });
+
+  it("教务管理员页面按学年分组展示学期，并提供切换确认", async () => {
+    const response = await page("/admin/terms", adminCookie);
+    expect(response.status).toBe(200);
+
+    const html = await response.text();
+    expect(html).toContain("学年与学期");
+    expect(html).toContain("<h3>2026-2027 学年</h3>");
+    expect(html).toContain("<h3>2025-2026 学年</h3>");
+    expect(html.indexOf("<h3>2026-2027 学年</h3>")).toBeLessThan(
+      html.indexOf("<h3>2025-2026 学年</h3>"),
+    );
+    expect(html).toContain("2026-2027 学年上学期");
+    expect(html).toContain("2026-2027 学年下学期");
+    expect(html).toContain("2025-2026 学年上学期");
+    expect(html).toContain("当前学期");
+
+    // 当前学期是 2026-2027 上学期；切到 2025-2026 上学期前必须出现确认文案。
+    expect(html).toContain(
+      "确定将当前学期从「2026-2027 学年上学期」切换为「2025-2026 学年上学期」吗？",
+    );
+    expect(html).toContain("确认切换");
+
+    const adminHome = await page("/admin", adminCookie);
+    expect(adminHome.status).toBe(200);
+    expect(await adminHome.text()).toContain('href="/admin/terms"');
+  });
+
+  it("教师不能进入学年学期管理页面", async () => {
+    const response = await page("/admin/terms", teacherCookie);
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain("无权访问");
+  });
+
+  it("设置当前学期后，学生与教师页面都显示当前学期", async () => {
+    for (const [route, cookie] of [
+      ["/student", studentCookie],
+      ["/teacher", teacherCookie],
+    ] as const) {
+      const response = await page(route, cookie);
+      expect(response.status).toBe(200);
+
+      const html = await response.text();
+      expect(html).toContain("当前学期：2026-2027 学年上学期");
+      expect(html).not.toContain("尚未设置当前学期");
+    }
   });
 });
 

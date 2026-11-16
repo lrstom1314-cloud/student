@@ -1,28 +1,8 @@
 import { getDb } from "@/db";
 import type { TermHalf } from "@/db/schema";
+import { academicYearLabel, termLabel } from "@/lib/term-labels";
 
-/**
- * 术语见 GLOSSARY.md：学年以起始年份标识（2025 表示 2025-2026 学年），
- * 学期在学年内分上 / 下；「当前学期」是系统设置里的全局唯一指针。
- */
-export const TERM_HALF_LABELS: Record<TermHalf, string> = {
-  first: "上学期",
-  second: "下学期",
-};
-
-export const TERM_HALVES: readonly TermHalf[] = ["first", "second"];
-
-export function isTermHalf(value: unknown): value is TermHalf {
-  return value === "first" || value === "second";
-}
-
-export function academicYearLabel(startYear: number): string {
-  return `${startYear}-${startYear + 1}`;
-}
-
-export function termLabel(startYear: number, half: TermHalf): string {
-  return `${academicYearLabel(startYear)} 学年${TERM_HALF_LABELS[half]}`;
-}
+export { isTermHalf } from "@/lib/term-labels";
 
 export type TermSummary = {
   id: string;
