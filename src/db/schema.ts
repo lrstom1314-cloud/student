@@ -1,10 +1,14 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -61,4 +65,64 @@ export const sessions = pgTable(
     index("sessions_account_id_idx").on(table.accountId),
     index("sessions_expires_at_idx").on(table.expiresAt),
   ],
+);
+
+/**
+ * 学期在学年内的半程。术语见 GLOSSARY.md：上 / 下。
+ */
+export const termHalf = pgEnum("term_half", ["first", "second"]);
+
+export type TermHalf = (typeof termHalf.enumValues)[number];
+
+/**
+ * 学年：容纳两个学期的容器，以起始年份标识（2025 表示 2025-2026 学年）。
+ */
+export const academicYears = pgTable("academic_years", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  startYear: integer("start_year").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * 学期：必须属于某个学年，同一学年下只能有一个上学期、一个下学期。
+ */
+export const terms = pgTable(
+  "terms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    academicYearId: uuid("academic_year_id")
+      .notNull()
+      .references(() => academicYears.id, { onDelete: "restrict" }),
+    half: termHalf("half").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("terms_academic_year_id_half_unique").on(
+      table.academicYearId,
+      table.half,
+    ),
+    index("terms_academic_year_id_idx").on(table.academicYearId),
+  ],
+);
+
+/**
+ * 全局唯一的系统设置行，只保存「当前学期」的指针。
+ * 当前学期不是学期表上的一行标记：单行 + 单列使「全局只有一个」由结构保证。
+ */
+export const termSettings = pgTable(
+  "term_settings",
+  {
+    id: text("id").primaryKey().default("singleton"),
+    currentTermId: uuid("current_term_id").references(() => terms.id, {
+      onDelete: "set null",
+    }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [check("term_settings_singleton", sql`${table.id} = 'singleton'`)],
 );

@@ -30,6 +30,13 @@ export function internalError(error: unknown): NextResponse {
   return errorResponse("服务暂时不可用，请稍后再试。", 500);
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 只接受标准 UUID，避免把非法字符串送进数据库触发语法错误。 */
+export function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+
 /** PostgreSQL 唯一约束冲突。 */
 export function isUniqueViolation(error: unknown): boolean {
   return (

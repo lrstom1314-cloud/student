@@ -1,3 +1,4 @@
+import { CurrentTermScope } from "@/components/current-term-scope";
 import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
 
@@ -17,6 +18,7 @@ export default async function TeacherPage() {
         </div>
         <LogoutButton />
       </header>
+      <CurrentTermScope />
       <p>教学班、课表与成绩将在后续功能中加入。</p>
     </main>
   );
