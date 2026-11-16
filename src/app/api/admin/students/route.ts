@@ -13,10 +13,31 @@ import { displayNameProblem, hashPassword, passwordProblem } from "@/lib/passwor
 import {
   createStudent,
   isEnrollmentStatus,
+  listStudents,
   studentNumberProblem,
 } from "@/lib/students";
 
 export const dynamic = "force-dynamic";
+
+/** 按行政班浏览名单；不传行政班则返回全部学生。 */
+export async function GET(request: Request) {
+  const guard = await requireApiUser({ roles: ["administrator"] });
+  if (!guard.ok) return guard.response;
+
+  const administrativeClassId = new URL(request.url).searchParams.get(
+    "administrativeClassId",
+  );
+  if (administrativeClassId !== null && !isUuid(administrativeClassId)) {
+    return errorResponse("行政班不存在。", 400);
+  }
+
+  try {
+    const students = await listStudents(administrativeClassId ?? undefined);
+    return NextResponse.json({ students }, { headers: NO_STORE });
+  } catch (error) {
+    return internalError(error);
+  }
+}
 
 /**
  * 教务管理员逐个新建学生。学号即登录名：该学号还没有账号时同时建号，

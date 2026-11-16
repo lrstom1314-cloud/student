@@ -202,3 +202,63 @@ export async function createStudent(
     } satisfies CreateStudentResult;
   });
 }
+
+export type UpdateStudentInput = {
+  name?: string;
+  administrativeClassId?: string;
+  enrollmentStatus?: EnrollmentStatus;
+};
+
+export type UpdateStudentResult =
+  | { ok: true; student: StudentSummary }
+  | { ok: false; status: number; error: string };
+
+/**
+ * 调整学籍：姓名、当前行政班（转班）与学籍状态。
+ * 只改传入的字段；行政班只有一个外键，转班后旧归属立即消失。
+ */
+export async function updateStudent(
+  id: string,
+  input: UpdateStudentInput,
+): Promise<UpdateStudentResult> {
+  const sql = getDb();
+
+  if (input.administrativeClassId !== undefined) {
+    const classes = await sql<{ id: string }[]>`
+      select id from administrative_classes
+      where id = ${input.administrativeClassId}
+      limit 1
+    `;
+    if (classes.length === 0) {
+      return { ok: false, status: 400, error: "所选行政班不存在。" };
+    }
+  }
+
+  const rows = await sql<StudentRow[]>`
+    with updated as (
+      update students
+      set name = coalesce(${input.name ?? null}::text, name),
+          administrative_class_id = coalesce(
+            ${input.administrativeClassId ?? null}::uuid,
+            administrative_class_id
+          ),
+          enrollment_status = coalesce(
+            ${input.enrollmentStatus ?? null}::enrollment_status,
+            enrollment_status
+          ),
+          updated_at = now()
+      where id = ${id}
+      returning *
+    )
+    select u.id, u.student_number, u.name, u.enrollment_status,
+           u.administrative_class_id, c.name as administrative_class_name
+    from updated u
+    join administrative_classes c on c.id = u.administrative_class_id
+  `;
+
+  const row = rows[0];
+  if (!row) {
+    return { ok: false, status: 404, error: "学生不存在。" };
+  }
+  return { ok: true, student: toSummary(row) };
+}

@@ -474,4 +474,202 @@ describe("行政班与学生", () => {
       ]);
     });
   });
+
+  describe("转班、学籍状态与名单", () => {
+    it("按行政班浏览学生名单，能看到每人当前学籍状态", async () => {
+      const classA = await createAdministrativeClass("高二 1 班");
+      const classB = await createAdministrativeClass("高二 2 班");
+
+      await createStudent({
+        studentNumber: "s2025101",
+        name: "名单甲",
+        administrativeClassId: classA.id,
+        enrollmentStatus: "enrolled",
+        initialPassword: "初始密码1234",
+      });
+      await createStudent({
+        studentNumber: "s2025102",
+        name: "名单乙",
+        administrativeClassId: classA.id,
+        enrollmentStatus: "suspended",
+        initialPassword: "初始密码1234",
+      });
+      await createStudent({
+        studentNumber: "s2025103",
+        name: "名单丙",
+        administrativeClassId: classB.id,
+        enrollmentStatus: "graduated",
+        initialPassword: "初始密码1234",
+      });
+
+      const response = await api(
+        "GET",
+        `/api/admin/students?administrativeClassId=${classA.id}`,
+        undefined,
+        adminCookie,
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        students: Array<{
+          studentNumber: string;
+          name: string;
+          enrollmentStatus: string;
+          administrativeClass: { id: string; name: string };
+        }>;
+      };
+
+      expect(body.students.map((student) => student.studentNumber)).toEqual([
+        "s2025101",
+        "s2025102",
+      ]);
+      expect(body.students[0]).toMatchObject({
+        name: "名单甲",
+        enrollmentStatus: "enrolled",
+        administrativeClass: { id: classA.id, name: "高二 1 班" },
+      });
+      expect(body.students[1]!.enrollmentStatus).toBe("suspended");
+
+      const all = await api("GET", "/api/admin/students", undefined, adminCookie);
+      expect(all.status).toBe(200);
+      const allBody = (await all.json()) as {
+        students: Array<{ studentNumber: string }>;
+      };
+      expect(allBody.students.map((student) => student.studentNumber)).toEqual(
+        expect.arrayContaining(["s2025101", "s2025102", "s2025103"]),
+      );
+    });
+
+    it("把学生转到另一行政班后，归属立即更新", async () => {
+      const classA = await createAdministrativeClass("高二 3 班");
+      const classB = await createAdministrativeClass("高二 4 班");
+      const created = await createStudent({
+        studentNumber: "s2025111",
+        name: "转班生",
+        administrativeClassId: classA.id,
+        initialPassword: "初始密码1234",
+      });
+      expect(created.status).toBe(201);
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+
+      const moved = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { administrativeClassId: classB.id },
+        adminCookie,
+      );
+      expect(moved.status).toBe(200);
+      expect(
+        ((await moved.json()) as {
+          student: { administrativeClass: { id: string; name: string } };
+        }).student.administrativeClass,
+      ).toEqual({ id: classB.id, name: "高二 4 班" });
+
+      const source = await api(
+        "GET",
+        `/api/admin/students?administrativeClassId=${classA.id}`,
+        undefined,
+        adminCookie,
+      );
+      const sourceBody = (await source.json()) as {
+        students: Array<{ studentNumber: string }>;
+      };
+      expect(
+        sourceBody.students.some(
+          (student) => student.studentNumber === "s2025111",
+        ),
+      ).toBe(false);
+
+      const target = await api(
+        "GET",
+        `/api/admin/students?administrativeClassId=${classB.id}`,
+        undefined,
+        adminCookie,
+      );
+      const targetBody = (await target.json()) as {
+        students: Array<{
+          studentNumber: string;
+          administrativeClass: { id: string };
+        }>;
+      };
+      expect(targetBody.students).toEqual([
+        expect.objectContaining({
+          studentNumber: "s2025111",
+          administrativeClass: expect.objectContaining({ id: classB.id }),
+        }),
+      ]);
+    });
+
+    it("学籍状态可在在读、休学、转出、毕业之间调整", async () => {
+      const administrativeClass = await createAdministrativeClass("高二 5 班");
+      const created = await createStudent({
+        studentNumber: "s2025121",
+        name: "状态生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+
+      for (const status of ["suspended", "transferred", "graduated", "enrolled"]) {
+        const response = await api(
+          "PATCH",
+          `/api/admin/students/${studentId}`,
+          { enrollmentStatus: status },
+          adminCookie,
+        );
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          student: { enrollmentStatus: string };
+        };
+        expect(body.student.enrollmentStatus).toBe(status);
+
+        const rows = await queryRows<{ enrollment_status: string }>(
+          app.schema!,
+          "select enrollment_status from students where id = $1",
+          [studentId],
+        );
+        expect(rows[0]!.enrollment_status).toBe(status);
+      }
+
+      const invalid = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { enrollmentStatus: "退学" },
+        adminCookie,
+      );
+      expect(invalid.status).toBe(400);
+      expect(((await invalid.json()) as Json).error).toContain("学籍状态");
+    });
+
+    it("转到不存在的行政班、修改不存在的学生返回可读错误", async () => {
+      const administrativeClass = await createAdministrativeClass("高二 6 班");
+      const created = await createStudent({
+        studentNumber: "s2025131",
+        name: "边界生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+
+      const missingClass = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { administrativeClassId: "00000000-0000-4000-8000-000000000000" },
+        adminCookie,
+      );
+      expect(missingClass.status).toBe(400);
+      expect(((await missingClass.json()) as Json).error).toContain("行政班");
+
+      const missingStudent = await api(
+        "PATCH",
+        "/api/admin/students/00000000-0000-4000-8000-000000000000",
+        { enrollmentStatus: "suspended" },
+        adminCookie,
+      );
+      expect(missingStudent.status).toBe(404);
+      expect(((await missingStudent.json()) as Json).error).toContain("学生");
+    });
+  });
 });
