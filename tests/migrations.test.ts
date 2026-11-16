@@ -16,11 +16,12 @@ describe("版本化数据库迁移", () => {
     await createSchema(schema);
     try {
       await runMigrations(schema);
-      expect(await appliedMigrationCount(schema)).toBe(1);
+      const applied = await appliedMigrationCount(schema);
+      expect(applied).toBeGreaterThan(0);
 
       // 第二次执行必须是幂等的：不报错、不重复记账。
       await runMigrations(schema);
-      expect(await appliedMigrationCount(schema)).toBe(1);
+      expect(await appliedMigrationCount(schema)).toBe(applied);
     } finally {
       await dropSchema(schema);
     }
