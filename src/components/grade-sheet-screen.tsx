@@ -491,6 +491,20 @@ export function GradeSheetScreen({
       </section>
 
       <section>
+        <h2>导出成绩表</h2>
+        <p className="hint">
+          {lock.latestPublication
+            ? "导出的是最后一次发布的成绩快照；解锁期间的修改不会出现在文件中。文件为 UTF-8 带 BOM 的 CSV，Excel 可直接打开。"
+            : "本教学班尚未发布，导出文件仅供内部核对，会在文件名与首行标注「未发布」，不代表正式成绩。"}
+        </p>
+        <p>
+          <a href={`/api/teaching-classes/${teachingClassId}/grades/export`}>
+            导出成绩表（CSV）
+          </a>
+        </p>
+      </section>
+
+      <section>
         <h2>成绩项</h2>
         {sheet.weightWarning === null ? (
           <p className="hint">

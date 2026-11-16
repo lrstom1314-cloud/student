@@ -1,0 +1,41 @@
+import { requireApiUser } from "@/lib/auth";
+import {
+  buildGradeExport,
+  contentDisposition,
+} from "@/lib/grade-export";
+import { errorResponse, internalError, isUuid, NO_STORE } from "@/lib/http";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * 导出教学班成绩表：UTF-8 带 BOM 的 CSV，Excel 直接打开不乱码。
+ *
+ * 有发布快照时永远导出快照，未发布过的教学班才导出实时草稿，
+ * 并在文件名与首行标注「未发布」，不把草稿伪装成正式成绩。
+ */
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireApiUser();
+  if (!guard.ok) return guard.response;
+
+  const { id } = await context.params;
+  if (!isUuid(id)) return errorResponse("教学班不存在。", 404);
+
+  try {
+    const result = await buildGradeExport(id, guard.user);
+    if (!result.ok) return errorResponse(result.error, result.status);
+
+    const bytes = new TextEncoder().encode(result.export.content);
+    return new Response(bytes, {
+      headers: {
+        ...NO_STORE,
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": contentDisposition(result.export.filename),
+      },
+    });
+  } catch (error) {
+    return internalError(error);
+  }
+}
