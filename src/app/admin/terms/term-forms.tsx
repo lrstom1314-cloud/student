@@ -138,6 +138,74 @@ export function CreateTermForm({
 }
 
 /**
+ * 设置教学第 1 周的起始日期。刻意只提供一个日期输入，不做复杂校历；
+ * 学生端用它把「今天」换算成当前教学周，从而标出单双周课程本周是否要上。
+ */
+export function SetStartDateForm({
+  termId,
+  termLabel,
+  startsOn,
+}: {
+  termId: string;
+  termLabel: string;
+  startsOn: string | null;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setPending(true);
+
+    const data = new FormData(event.currentTarget);
+    const value = data.get("startsOn");
+    const startsOnValue =
+      typeof value === "string" && value.length > 0 ? value : null;
+
+    try {
+      const response = await fetch(`/api/admin/terms/${termId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ startsOn: startsOnValue }),
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as ApiResult;
+        setError(body.error ?? "保存失败，请稍后再试。");
+        setPending(false);
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setError("网络异常，请稍后再试。");
+      setPending(false);
+    }
+  }
+
+  return (
+    <form className="form form-compact term-starts-on" onSubmit={onSubmit}>
+      <label className="form-field">
+        <span>{`${termLabel} 的开学日期`}</span>
+        <input
+          type="date"
+          name="startsOn"
+          defaultValue={startsOn ?? ""}
+          aria-label={`${termLabel} 的教学第 1 周起始日期`}
+        />
+      </label>
+      <button type="submit" disabled={pending}>
+        {pending ? "保存中…" : "保存开学日期"}
+      </button>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/**
  * 切换当前学期前先展开确认区，明确写出「从哪个学期切到哪个学期」。
  * 确认后再提交 confirmed=true；接口本身也会拒绝未确认的请求。
  */

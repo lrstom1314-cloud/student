@@ -43,6 +43,13 @@
       "when": 1794849590773,
       "tag": "0005_timetable_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794850095743,
+      "tag": "0006_term_starts_on",
+      "breakpoints": true
     }
   ]
 }
