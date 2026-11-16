@@ -1,8 +1,10 @@
-export default function HomePage() {
-  return (
-    <main className="page">
-      <h1>学生系统</h1>
-      <p>骨架已就绪。后续工单将在这里加入登录、学籍、课程、课表与成绩。</p>
-    </main>
-  );
+import { redirect } from "next/navigation";
+
+import { getSessionUser, landingFor } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const user = await getSessionUser();
+  redirect(user ? landingFor(user) : "/login");
 }

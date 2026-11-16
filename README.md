@@ -2,7 +2,7 @@
 
 单机构教务系统。领域词汇以 [`GLOSSARY.md`](./GLOSSARY.md) 为准，架构决策见 [`docs/adr/`](./docs/adr/)。
 
-当前处于骨架阶段：应用可启动、连接 PostgreSQL、执行版本化迁移，并提供健康检查与 HTTP 测试底座。账号、学籍、课程等能力由后续工单加入。
+当前已具备账号与会话：三种角色共用一个登录入口，密码以 Argon2id 哈希存储，会话由服务端签发并保存在 PostgreSQL；学生与教师账号由教务管理员创建，首次登录必须改密。学籍、课程、课表与成绩由后续工单加入。
 
 ## 环境要求
 
@@ -25,6 +25,50 @@ cp .env.example .env
 | `POSTGRES_PORT` / `APP_PORT` | 映射到宿主机的端口 |
 | `DATABASE_URL` | 应用与测试使用的 PostgreSQL 连接串 |
 | `DATABASE_SCHEMA` | 可选。把连接固定到某个 schema；生产留空（`public`），测试脚手架会自动注入 |
+
+## 账号与会话
+
+三个角色（学生 / 教师 / 教务管理员）共用 `/login` 一个入口，登录后分别进入
+`/student`、`/teacher`、`/admin`。账号不能自助注册。
+
+- 教务管理员在 `/admin` 创建账号、重置任意账号密码、启用或停用账号。
+- 新建账号与重置后的账号都带「需强制改密」标记：登录后只能访问 `/change-password`，
+  改密完成前其它页面会重定向到改密页，其它接口返回 403。
+- 未登录访问受保护页面会跳到 `/login?next=原路径`，登录后回到原目标页。
+- 角色不符由服务端返回 403；前端隐藏不作为授权手段。
+- 空密码、错误密码、不存在的账号与已停用账号统一返回「登录名或密码错误。」，
+  不区分原因；不存在的账号也会执行一次等价的 Argon2id 校验。
+
+### 会话
+
+- 会话令牌是 32 字节随机值，放在 `student_session` cookie 中：`HttpOnly`、
+  `SameSite=Lax`、`Path=/`，生产环境（`NODE_ENV=production`）加 `Secure`。
+- cookie 只放令牌，会话数据存在 `sessions` 表，数据库里只存令牌的 SHA-256 哈希。
+- 会话为**绝对过期**：签发后 7 天失效，不随访问续期；过期后服务端直接拒绝。
+- 登录、改密都会轮换会话；改密、重置密码、停用账号会吊销该账号的全部会话，
+  退出登录会删除当前会话。
+- 密码使用 Argon2id（19 MiB、2 次迭代、1 路并行），数据库与任何接口响应中
+  都不会出现明文或哈希。密码长度要求 8–128 位，登录名最长 64 个字符。
+
+### 创建第一个教务管理员
+
+系统不提供公开的管理员注册入口。首次部署、迁移完成后，用脚本创建：
+
+```sh
+DATABASE_URL='postgres://...' npm run account:create -- \
+  --login admin --name 教务甲 --role administrator \
+  --password '换成足够长的密码' --no-force-change
+```
+
+容器中执行：
+
+```sh
+docker compose exec app node scripts/create-account.mjs \
+  --login admin --name 教务甲 --password '...' --no-force-change
+```
+
+之后的学生、教师与其它管理员账号都在 `/admin` 界面创建，初始密码由教务管理员设置，
+对方首次登录必须修改。脚本也用于本机排障，参数含义见 `scripts/create-account.mjs`。
 
 ## 用 Docker Compose 启动
 
@@ -57,8 +101,11 @@ npm run db:generate -- --name=添加学生表   # 根据 src/db/schema.ts 生成
 npm run db:migrate                         # 应用到 DATABASE_URL 指向的数据库
 ```
 
-- `drizzle/0000_baseline.sql` 是空基线，只用于建立迁移记账；业务表从后续工单开始加入。
+- `drizzle/0000_baseline.sql` 是空基线，只用于建立迁移记账。
+- `drizzle/0001_accounts_and_sessions.sql` 建立账号与会话表，是第一个业务迁移。
 - 已应用的迁移记录在 `drizzle.__drizzle_migrations`，重复执行不会再次应用。
+- 生成迁移后，`npm run db:generate` 会自动去掉 drizzle-kit 写入的 `"public".` 限定，
+  让同一份迁移能在测试的独立 schema 中执行；不要手工改回。
 - 容器启动时会自动执行迁移，因此部署新版本不需要单独的迁移步骤。
 - `.gitignore` 会拦截 `*.sql`，但显式放行 `drizzle/**/*.sql`，迁移文件必须入库。
 
@@ -86,6 +133,8 @@ SKIP_BUILD=1 npm test
 
 - `DATABASE_URL` 必须指向可用的 PostgreSQL，账号需要 `CREATE SCHEMA` 权限（Compose 中的应用账号满足）。
 - 测试数据只使用虚构学生（如「张三」「李四」）与虚构班级，禁止真实姓名、学号或成绩。
+- `tests/auth.test.ts` 覆盖账号创建、Argon2id 存储、统一登录失败提示、会话 cookie
+  属性与过期、强制改密、管理员重置、停用账号和三角色权限边界。
 - 数据库不可用时会明确报错并提示先启动 PostgreSQL，而不是静默跳过。
 
 ## 生产构建
@@ -101,9 +150,13 @@ npm start
 
 ```
 src/app/            页面与 route handler（App Router）
-src/app/healthz/    健康检查
+src/app/api/        登录、退出、改密与账号管理接口
+src/app/admin/      教务管理员账号管理
+src/app/change-password/ 修改密码（含首次强制改密）
 src/db/             PostgreSQL 连接与 Drizzle 表定义
+src/lib/            认证、会话、密码与账号逻辑
 drizzle/            版本化迁移与 journal
 scripts/migrate.mjs 迁移执行器（应用与容器共用）
+scripts/create-account.mjs 首个管理员开通脚本
 tests/              HTTP 测试与测试脚手架
 ```

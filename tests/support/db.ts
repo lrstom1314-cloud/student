@@ -77,6 +77,29 @@ export async function runMigrations(schema: string): Promise<void> {
   }
 }
 
+/**
+ * 在测试 schema 内执行只读查询，用于断言数据库最终状态。
+ * 业务行为仍只从 HTTP 边界观察。
+ */
+export async function queryRows<T>(
+  schema: string,
+  text: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  const sql = postgres(databaseUrl(), {
+    max: 1,
+    connect_timeout: 5,
+    onnotice: false,
+    connection: { search_path: quoteSchema(schema) },
+  });
+
+  try {
+    return await sql.unsafe<T[]>(text, params as never[]);
+  } finally {
+    await sql.end();
+  }
+}
+
 export async function appliedMigrationCount(schema: string): Promise<number> {
   const sql = adminClient();
   try {
