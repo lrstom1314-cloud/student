@@ -1,5 +1,6 @@
 import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
+import { listStudentPublishedGrades } from "@/lib/student-grades";
 import { getStudentTimetable } from "@/lib/student-timetable";
 import {
   periodLabel,
@@ -65,6 +66,9 @@ export default async function StudentPage() {
   const user = await requirePageUser("/student", { roles: ["student"] });
   const timetable = await getStudentTimetable(user.id);
   const { currentTerm, entries } = timetable;
+  const courses = currentTerm
+    ? await listStudentPublishedGrades(user.id, currentTerm.id)
+    : [];
 
   return (
     <main className="page wide">
@@ -75,7 +79,7 @@ export default async function StudentPage() {
             当前账号：{user.displayName}（{user.loginName}）
           </p>
           <p className="hint">
-            这里只显示你自己的教学班。成绩查询将在后续功能中加入。
+            这里只显示你自己的教学班与已发布的成绩，看不到其他同学的数据。
           </p>
         </div>
         <LogoutButton />
@@ -128,10 +132,7 @@ export default async function StudentPage() {
                       <p className="timetable-empty">无课</p>
                     ) : (
                       dayEntries.map((entry) => (
-                        <article
-                          key={entry.id}
-                          className="timetable-entry"
-                        >
+                        <article key={entry.id} className="timetable-entry">
                           <p className="timetable-entry-time">
                             {periodLabel(entry.startPeriod, entry.endPeriod)}
                           </p>
@@ -163,6 +164,68 @@ export default async function StudentPage() {
                 );
               })}
             </div>
+          )}
+        </section>
+      ) : null}
+
+      {currentTerm ? (
+        <section>
+          <h2>我的成绩</h2>
+          {courses.length === 0 ? (
+            <p>本学期还没有加入任何教学班。</p>
+          ) : (
+            courses.map((course) => (
+              <article key={course.teachingClass.id} className="year-group">
+                <h3>
+                  {course.teachingClass.courseName}
+                  {course.teachingClass.displayName !==
+                  course.teachingClass.courseName
+                    ? ` · ${course.teachingClass.displayName}`
+                    : ""}
+                </h3>
+                <p className="hint">
+                  {course.teachingClass.termLabel} ·{" "}
+                  {course.teachingClass.teacherName}
+                </p>
+                {course.published ? (
+                  <>
+                    <p>
+                      总评：
+                      {course.overall.status === "incomplete" ? (
+                        <span className="badge">未完成</span>
+                      ) : (
+                        <strong>{course.overall.finalScore ?? "—"}</strong>
+                      )}
+                    </p>
+                    <details>
+                      <summary>成绩明细</summary>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>成绩项</th>
+                            <th>满分</th>
+                            <th>权重</th>
+                            <th>得分</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {course.items.map((item) => (
+                            <tr key={item.gradeItemId}>
+                              <td>{item.name}</td>
+                              <td>{item.maxScore}</td>
+                              <td>{item.weight}%</td>
+                              <td>{item.score === null ? "缺考" : item.score}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  </>
+                ) : (
+                  <p>暂无成绩</p>
+                )}
+              </article>
+            ))
           )}
         </section>
       ) : null}

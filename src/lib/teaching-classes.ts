@@ -195,6 +195,16 @@ export async function listTeachingClassesByTerm(
   return rows.map(toSummary);
 }
 
+export async function listAllTeachingClasses(): Promise<
+  TeachingClassSummary[]
+> {
+  const sql = getDb();
+  const rows = await sql.unsafe<TeachingClassRow[]>(
+    `${SUMMARY_SELECT} ${SUMMARY_ORDER}`,
+  );
+  return rows.map(toSummary);
+}
+
 export async function listTeachingClassesForStudent(
   termId: string,
   studentId: string,

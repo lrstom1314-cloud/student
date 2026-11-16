@@ -219,6 +219,19 @@ export const courses = pgTable("courses", {
 });
 
 /**
+ * 教学班成绩的对外状态。发布粒度是整个教学班，而不是单个成绩项：
+ * draft 表示学生看不到任何成绩；published 表示学生看到最近一次发布的快照，
+ * 且任何角色都不能再写成绩，必须先由教务管理员解锁回到 draft。
+ */
+export const teachingClassGradeState = pgEnum("teaching_class_grade_state", [
+  "draft",
+  "published",
+]);
+
+export type TeachingClassGradeState =
+  (typeof teachingClassGradeState.enumValues)[number];
+
+/**
  * 教学班：某学期由一位教师开设的一门课程。
  * 同一学期同一课程可以开多个教学班，因此三者之间不设唯一约束。
  */
@@ -236,6 +249,9 @@ export const teachingClasses = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: "restrict" }),
     displayName: text("display_name").notNull(),
+    gradeState: teachingClassGradeState("grade_state")
+      .notNull()
+      .default("draft"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -439,12 +455,148 @@ export const gradeOveralls = pgTable(
 );
 
 /**
+ * 发布快照的版本头：同一教学班每次发布追加一行，version 从 1 递增。
+ * 学生读取的是版本号最大的那一份；历史版本原样保留，便于解释旧结果。
+ */
+export const gradePublications = pgTable(
+  "grade_publications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    publishedBy: uuid("published_by")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    publishedAt: timestamp("published_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grade_publications_teaching_class_id_version_unique").on(
+      table.teachingClassId,
+      table.version,
+    ),
+    index("grade_publications_teaching_class_id_idx").on(
+      table.teachingClassId,
+    ),
+  ],
+);
+
+/**
+ * 发布时的成绩项定义快照：名称、满分、权重都按发布那一刻固化。
+ * grade_item_id 只是与原成绩项的关联线索，不设外键 —— 快照必须在
+ * 成绩项改名或被删除之后仍然完整可读。
+ */
+export const gradePublicationItems = pgTable(
+  "grade_publication_items",
+  {
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => gradePublications.id, { onDelete: "cascade" }),
+    gradeItemId: uuid("grade_item_id").notNull(),
+    position: integer("position").notNull(),
+    name: text("name").notNull(),
+    maxScore: numeric("max_score", { precision: 6, scale: 2 }).notNull(),
+    weight: numeric("weight", { precision: 5, scale: 2 }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.gradeItemId] }),
+    uniqueIndex("grade_publication_items_publication_position_unique").on(
+      table.publicationId,
+      table.position,
+    ),
+    check(
+      "grade_publication_items_max_score_positive",
+      sql`${table.maxScore} > 0`,
+    ),
+    check(
+      "grade_publication_items_weight_range",
+      sql`${table.weight} > 0 and ${table.weight} <= 100`,
+    ),
+    check(
+      "grade_publication_items_position_non_negative",
+      sql`${table.position} >= 0`,
+    ),
+  ],
+);
+
+/** 发布时的得分快照；没有行就表示当时缺考/未录入，与实时语义一致。 */
+export const gradePublicationScores = pgTable(
+  "grade_publication_scores",
+  {
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => gradePublications.id, { onDelete: "cascade" }),
+    gradeItemId: uuid("grade_item_id").notNull(),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    score: numeric("score", { precision: 6, scale: 2 }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.publicationId, table.gradeItemId, table.studentId],
+    }),
+    index("grade_publication_scores_student_id_idx").on(table.studentId),
+    check(
+      "grade_publication_scores_score_non_negative",
+      sql`${table.score} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * 发布时的总评快照：系统计算值、覆盖值、最终值与来源都一并固化，
+ * 另外抄下学号与姓名，使学生在名单调整后仍能看到当时的本人结果。
+ */
+export const gradePublicationOveralls = pgTable(
+  "grade_publication_overalls",
+  {
+    publicationId: uuid("publication_id")
+      .notNull()
+      .references(() => gradePublications.id, { onDelete: "cascade" }),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    studentNumber: text("student_number").notNull(),
+    studentName: text("student_name").notNull(),
+    computedScore: numeric("computed_score", { precision: 8, scale: 2 }),
+    overrideScore: numeric("override_score", { precision: 8, scale: 2 }),
+    finalScore: numeric("final_score", { precision: 8, scale: 2 }),
+    finalSource: text("final_source"),
+    status: text("status").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.studentId] }),
+    index("grade_publication_overalls_student_id_idx").on(table.studentId),
+    check(
+      "grade_publication_overalls_final_source_valid",
+      sql`${table.finalSource} is null or ${table.finalSource} in ('computed', 'override')`,
+    ),
+    check(
+      "grade_publication_overalls_status_valid",
+      sql`${table.status} in ('complete', 'incomplete')`,
+    ),
+    check(
+      "grade_publication_overalls_scores_non_negative",
+      sql`(${table.computedScore} is null or ${table.computedScore} >= 0)
+        and (${table.overrideScore} is null or ${table.overrideScore} >= 0)
+        and (${table.finalScore} is null or ${table.finalScore} >= 0)`,
+    ),
+  ],
+);
+
+/**
  * 成绩变更日志：谁、何时、对哪个教学班的哪个学生做了什么。
- * 目标既可以是某个成绩项的得分，也可以是总评覆盖。
+ * 目标既可以是某个成绩项的得分，也可以是总评覆盖；
+ * 发布与解锁是整个教学班的动作，因此目标为 teaching_class 且没有目标学生。
  */
 export const gradeChangeTarget = pgEnum("grade_change_target", [
   "grade_item",
   "overall",
+  "teaching_class",
 ]);
 
 export type GradeChangeTarget = (typeof gradeChangeTarget.enumValues)[number];
@@ -471,9 +623,10 @@ export const gradeChangeLogs = pgTable(
     teachingClassId: uuid("teaching_class_id")
       .notNull()
       .references(() => teachingClasses.id, { onDelete: "cascade" }),
-    studentId: uuid("student_id")
-      .notNull()
-      .references(() => students.id, { onDelete: "restrict" }),
+    // 发布/解锁是教学班级动作，没有目标学生；其余动作必须有目标学生。
+    studentId: uuid("student_id").references(() => students.id, {
+      onDelete: "restrict",
+    }),
     gradeItemId: uuid("grade_item_id").references(() => gradeItems.id, {
       onDelete: "set null",
     }),
@@ -499,6 +652,11 @@ export const gradeChangeLogs = pgTable(
     check(
       "grade_change_logs_target_item",
       sql`${table.target} = 'grade_item' or ${table.gradeItemId} is null`,
+    ),
+    check(
+      "grade_change_logs_target_student",
+      sql`(${table.target}::text = 'teaching_class' and ${table.studentId} is null)
+        or (${table.target}::text <> 'teaching_class' and ${table.studentId} is not null)`,
     ),
   ],
 );
