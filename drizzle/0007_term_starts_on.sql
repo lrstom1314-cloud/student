@@ -1,0 +1,1 @@
+ALTER TABLE "terms" ADD COLUMN "starts_on" date;

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   numeric,
@@ -153,6 +154,11 @@ export const academicYears = pgTable("academic_years", {
 
 /**
  * 学期：必须属于某个学年，同一学年下只能有一个上学期、一个下学期。
+ *
+ * starts_on 是教学第 1 周的起始日期（周一）。它只用于把「今天」换算成
+ * 当前教学第几周，从而标出单双周课程本周是否要上；不设置时学生端仍能
+ * 显示课表，只是不标「本周」。日期类数据用 date 而非 timestamp：
+ * 这里表达的是校历上的自然日，不关心时刻。
  */
 export const terms = pgTable(
   "terms",
@@ -162,6 +168,7 @@ export const terms = pgTable(
       .notNull()
       .references(() => academicYears.id, { onDelete: "restrict" }),
     half: termHalf("half").notNull(),
+    startsOn: date("starts_on"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -183,6 +183,75 @@ button:disabled {
   white-space: normal;
 }
 
+.term-starts-on {
+  margin: 0.5rem 0 0;
+}
+
+.term-starts-on .form-field {
+  min-width: 0;
+}
+
+/* 一周课表：桌面按 7 列并排，窄屏堆叠成按星期阅读的单列，
+   保证手机上不需要横向滚动就能读完一周。 */
+.timetable-week {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 1rem 0;
+}
+
+.timetable-day {
+  border: 1px solid #d5dbe1;
+  border-radius: 6px;
+  min-width: 0;
+  padding: 0.5rem;
+}
+
+.timetable-day-title {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+
+.timetable-entry {
+  border-top: 1px solid #e3e8ed;
+  padding: 0.5rem 0;
+}
+
+.timetable-entry:first-of-type {
+  border-top: none;
+}
+
+.timetable-entry p {
+  line-height: 1.4;
+  margin: 0.15rem 0;
+  overflow-wrap: anywhere;
+}
+
+.timetable-entry-time {
+  font-weight: 600;
+}
+
+.timetable-entry-title {
+  font-size: 0.95rem;
+}
+
+.timetable-entry-meta {
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.timetable-empty {
+  color: #999;
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.badge-muted {
+  background: #f0f0f0;
+  border-color: #d5dbe1;
+  color: #777;
+}
+
 .table {
   border-collapse: collapse;
   width: 100%;
@@ -229,6 +298,10 @@ button:disabled {
 
   .page-header {
     flex-direction: column;
+  }
+
+  .timetable-week {
+    grid-template-columns: 1fr;
   }
 
   .table {
