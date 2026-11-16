@@ -402,6 +402,212 @@ async function recomputeOveralls(
   }
 }
 
+type LogInput = {
+  teachingClassId: string;
+  studentId: string;
+  gradeItemId: string | null;
+  target: "grade_item" | "overall";
+  action:
+    | "record"
+    | "update"
+    | "override_overall"
+    | "cancel_override"
+    | "publish"
+    | "unlock";
+  actorAccountId: string;
+  oldScaled: number | null;
+  newScaled: number | null;
+  reason?: string | null;
+};
+
+/**
+ * 成绩变更日志：录入/修改成绩项、覆盖/取消覆盖总评都留痕。
+ * 系统按公式重算总评不算人工变更，因此不写日志。
+ */
+async function insertGradeChangeLog(
+  tx: TransactionSql,
+  input: LogInput,
+): Promise<void> {
+  await tx`
+    insert into grade_change_logs (
+      teaching_class_id, student_id, grade_item_id, target, action,
+      actor_account_id, old_value, new_value, reason
+    )
+    values (
+      ${input.teachingClassId}, ${input.studentId}, ${input.gradeItemId},
+      ${input.target}, ${input.action}, ${input.actorAccountId},
+      ${input.oldScaled === null ? null : scaledToText(input.oldScaled)},
+      ${input.newScaled === null ? null : scaledToText(input.newScaled)},
+      ${input.reason ?? null}
+    )
+  `;
+}
+
+export type SaveScoresResult =
+  | { ok: true; sheet: GradeSheet; updatedCount: number }
+  | { ok: false; status: number; error: string };
+
+type PendingScore = {
+  studentId: string;
+  gradeItemId: string;
+  scaled: number | null;
+};
+
+/**
+ * 成批保存网格中的得分。整批共用一个事务：任何一格不合法都整批拒绝，
+ * 不会留下“改了一半”的成绩。空白表示未录入，会删除对应的成绩行。
+ */
+export async function saveScores(input: {
+  teachingClassId: string;
+  user: SessionUser;
+  scores: unknown;
+}): Promise<SaveScoresResult> {
+  const access = await authorizeGradeAccess(input.teachingClassId, input.user);
+  if (!access.ok) return access;
+
+  if (!Array.isArray(input.scores)) {
+    return { ok: false, status: 400, error: "请提供要保存的成绩。" };
+  }
+  const scores = input.scores;
+
+  const sql = getDb();
+  const outcome = await sql.begin<
+    { ok: true; updatedCount: number } | { ok: false; status: number; error: string }
+  >(async (tx) => {
+    const itemRows = await tx<{ id: string; max_score: string }[]>`
+      select id, max_score::text as max_score
+      from grade_items
+      where teaching_class_id = ${input.teachingClassId}
+    `;
+    const itemMax = new Map(
+      itemRows.map((row) => [row.id, parseStoredDecimal(row.max_score) ?? 0]),
+    );
+
+    const rosterRows = await tx<{ student_id: string }[]>`
+      select student_id from teaching_class_students
+      where teaching_class_id = ${input.teachingClassId}
+    `;
+    const roster = new Set(rosterRows.map((row) => row.student_id));
+
+    const validated: PendingScore[] = [];
+    for (const entry of scores) {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        return { ok: false, status: 400, error: "成绩数据无法识别。" };
+      }
+      const record = entry as Record<string, unknown>;
+      const studentId =
+        typeof record.studentId === "string" ? record.studentId : "";
+      const gradeItemId =
+        typeof record.gradeItemId === "string" ? record.gradeItemId : "";
+      const maxScaled = itemMax.get(gradeItemId);
+      if (maxScaled === undefined) {
+        return { ok: false, status: 404, error: "成绩项不存在。" };
+      }
+      if (!roster.has(studentId)) {
+        return {
+          ok: false,
+          status: 400,
+          error: "该学生不在本教学班名单中。",
+        };
+      }
+
+      const raw = record.score;
+      if (raw === null || raw === "") {
+        validated.push({ studentId, gradeItemId, scaled: null });
+        continue;
+      }
+      const looksNegative =
+        (typeof raw === "number" && raw < 0) ||
+        (typeof raw === "string" && raw.trim().startsWith("-"));
+      if (looksNegative) {
+        return {
+          ok: false,
+          status: 400,
+          error: `得分需在 0 到 ${scaledToNumber(maxScaled)} 之间。`,
+        };
+      }
+
+      const parsed = parseDecimal(raw, "得分");
+      if (!parsed.ok) {
+        return { ok: false, status: 400, error: parsed.error };
+      }
+      if (parsed.scaled > maxScaled) {
+        return {
+          ok: false,
+          status: 400,
+          error: `得分需在 0 到 ${scaledToNumber(maxScaled)} 之间。`,
+        };
+      }
+      validated.push({ studentId, gradeItemId, scaled: parsed.scaled });
+    }
+
+    const existingRows = await tx<
+      { grade_item_id: string; student_id: string; score: string }[]
+    >`
+      select sg.grade_item_id, sg.student_id, sg.score::text as score
+      from student_grades sg
+      join grade_items gi on gi.id = sg.grade_item_id
+      where gi.teaching_class_id = ${input.teachingClassId}
+    `;
+    const existing = new Map<string, number>();
+    for (const row of existingRows) {
+      const score = parseStoredDecimal(row.score);
+      if (score === null) continue;
+      existing.set(`${row.grade_item_id}:${row.student_id}`, score);
+    }
+
+    let updatedCount = 0;
+    for (const entry of validated) {
+      const key = `${entry.gradeItemId}:${entry.studentId}`;
+      const oldScaled = existing.get(key) ?? null;
+      if (oldScaled === entry.scaled) continue;
+
+      if (entry.scaled === null) {
+        await tx`
+          delete from student_grades
+          where grade_item_id = ${entry.gradeItemId}
+            and student_id = ${entry.studentId}
+        `;
+      } else {
+        await tx`
+          insert into student_grades (grade_item_id, student_id, score)
+          values (
+            ${entry.gradeItemId}, ${entry.studentId},
+            ${scaledToText(entry.scaled)}
+          )
+          on conflict (grade_item_id, student_id) do update
+          set score = excluded.score, updated_at = now()
+        `;
+      }
+
+      await insertGradeChangeLog(tx, {
+        teachingClassId: input.teachingClassId,
+        studentId: entry.studentId,
+        gradeItemId: entry.gradeItemId,
+        target: "grade_item",
+        action: oldScaled === null ? "record" : "update",
+        actorAccountId: input.user.id,
+        oldScaled,
+        newScaled: entry.scaled,
+      });
+      if (entry.scaled === null) existing.delete(key);
+      else existing.set(key, entry.scaled);
+      updatedCount += 1;
+    }
+
+    await recomputeOveralls(tx, input.teachingClassId);
+    return { ok: true, updatedCount };
+  });
+
+  if (!outcome.ok) return outcome;
+
+  const sheet = await getGradeSheet(input.teachingClassId);
+  if (!sheet) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  return { ok: true, sheet, updatedCount: outcome.updatedCount };
+}
+
 export type CreateGradeItemResult =
   | { ok: true; gradeItem: GradeItemSummary; sheet: GradeSheet }
   | { ok: false; status: number; error: string };

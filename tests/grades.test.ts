@@ -523,6 +523,332 @@ describe("成绩项与总评计算", () => {
       expect(rows[0]!.count).toBe(0);
     });
 
+    it("成绩网格返回全部学生 × 全部成绩项，未录入时总评为未完成", async () => {
+      const sheet = await getSheet(ids.classMain);
+
+      expect(sheet.teachingClass.id).toBe(ids.classMain);
+      expect(sheet.gradeItems.map((item) => item.name)).toEqual([
+        "平时",
+        "期中",
+        "期末",
+      ]);
+      expect(
+        sheet.students.map((student) => student.studentNumber),
+      ).toEqual(["s1001", "s1002"]);
+
+      for (const student of sheet.students) {
+        expect(student.grades).toEqual({
+          [sheet.gradeItems[0]!.id]: null,
+          [sheet.gradeItems[1]!.id]: null,
+          [sheet.gradeItems[2]!.id]: null,
+        });
+        expect(student.overall).toEqual({
+          computedScore: null,
+          overrideScore: null,
+          finalScore: null,
+          finalSource: null,
+          status: "incomplete",
+          missingGradeItemIds: sheet.gradeItems.map((item) => item.id),
+        });
+      }
+    });
+
+    it("按权重计算总评 Σ(得分 ÷ 满分 × 权重)，并四舍五入到两位小数", async () => {
+      const items = await getSheet(ids.classMain);
+      const [daily, midterm, final] = items.gradeItems;
+      const [zhang, li] = items.students;
+
+      const saved = await saveScores(ids.classMain, [
+        { studentId: zhang!.id, gradeItemId: daily!.id, score: 80 },
+        { studentId: zhang!.id, gradeItemId: midterm!.id, score: 90 },
+        { studentId: zhang!.id, gradeItemId: final!.id, score: 85 },
+        { studentId: li!.id, gradeItemId: daily!.id, score: "100" },
+        { studentId: li!.id, gradeItemId: midterm!.id, score: "100" },
+        { studentId: li!.id, gradeItemId: final!.id, score: "100" },
+      ]);
+      expect(saved.status).toBe(200);
+      const body = (await saved.json()) as { sheet: GradeSheetJson };
+
+      const zhangSheet = body.sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+      expect(zhangSheet.overall).toEqual({
+        computedScore: 85,
+        overrideScore: null,
+        finalScore: 85,
+        finalSource: "computed",
+        status: "complete",
+        missingGradeItemIds: [],
+      });
+      expect(zhangSheet.grades).toEqual({
+        [daily!.id]: 80,
+        [midterm!.id]: 90,
+        [final!.id]: 85,
+      });
+
+      const liSheet = body.sheet.students.find(
+        (student) => student.studentNumber === "s1002",
+      )!;
+      expect(liSheet.overall.computedScore).toBe(100);
+      expect(liSheet.overall.status).toBe("complete");
+
+      const rows = await queryRows<{
+        student_number: string;
+        computed_score: string | null;
+      }>(
+        app.schema!,
+        `select s.student_number, go.computed_score::text as computed_score
+         from grade_overalls go
+         join students s on s.id = go.student_id
+         where go.teaching_class_id = $1
+         order by s.student_number`,
+        [ids.classMain],
+      );
+      expect(rows).toEqual([
+        { student_number: "s1001", computed_score: "85.00" },
+        { student_number: "s1002", computed_score: "100.00" },
+      ]);
+
+      // 0.125 在第三位小数处为 5，必须向上进位成 0.13。
+      const rounding = await getSheet(ids.classRounding);
+      const rounded = await saveScores(ids.classRounding, [
+        {
+          studentId: rounding.students[0]!.id,
+          gradeItemId: rounding.gradeItems[0]!.id,
+          score: 1,
+        },
+      ]);
+      expect(rounded.status).toBe(200);
+      const roundedBody = (await rounded.json()) as { sheet: GradeSheetJson };
+      expect(roundedBody.sheet.students[0]!.overall.computedScore).toBe(0.13);
+    });
+
+    it("得分留空表示缺考/未录入，不按 0 分参与计算；缺一项时总评未完成", async () => {
+      const sheet = await getSheet(ids.classMain);
+      const [daily, midterm, final] = sheet.gradeItems;
+      const li = sheet.students.find(
+        (student) => student.studentNumber === "s1002",
+      )!;
+
+      // 把李四的期末成绩清空：总评应为未完成，而不是按 80 分计算。
+      const blanked = await saveScores(ids.classMain, [
+        { studentId: li.id, gradeItemId: final!.id, score: null },
+      ]);
+      expect(blanked.status).toBe(200);
+      const blankedBody = (await blanked.json()) as { sheet: GradeSheetJson };
+      const blankedLi = blankedBody.sheet.students.find(
+        (student) => student.studentNumber === "s1002",
+      )!;
+      expect(blankedLi.grades[final!.id]).toBeNull();
+      expect(blankedLi.overall).toEqual({
+        computedScore: null,
+        overrideScore: null,
+        finalScore: null,
+        finalSource: null,
+        status: "incomplete",
+        missingGradeItemIds: [final!.id],
+      });
+      // 明确不退化：缺失一项时不能把空值当 0 加出 60 分或其它总和。
+      expect(blankedLi.overall.computedScore).not.toBe(60);
+      expect(blankedLi.overall.computedScore).not.toBe(0);
+
+      const deleted = await queryRows<{ count: number }>(
+        app.schema!,
+        `select count(*)::int as count from student_grades
+         where student_id = $1 and grade_item_id = $2`,
+        [li.id, final!.id],
+      );
+      expect(deleted[0]!.count).toBe(0);
+
+      // 重新录入后恢复为完整总评。
+      const restored = await saveScores(ids.classMain, [
+        { studentId: li.id, gradeItemId: final!.id, score: 100 },
+      ]);
+      expect(restored.status).toBe(200);
+      const restoredBody = (await restored.json()) as { sheet: GradeSheetJson };
+      expect(
+        restoredBody.sheet.students.find(
+          (student) => student.studentNumber === "s1002",
+        )!.overall,
+      ).toMatchObject({
+        computedScore: 100,
+        status: "complete",
+        missingGradeItemIds: [],
+      });
+
+      // 只录一半的学生同样是未完成。
+      const partial = await saveScores(ids.classMain, [
+        { studentId: li.id, gradeItemId: midterm!.id, score: 90 },
+        { studentId: li.id, gradeItemId: final!.id, score: null },
+      ]);
+      expect(partial.status).toBe(200);
+      const partialBody = (await partial.json()) as { sheet: GradeSheetJson };
+      const partialLi = partialBody.sheet.students.find(
+        (student) => student.studentNumber === "s1002",
+      )!;
+      expect(partialLi.overall.computedScore).toBeNull();
+      expect(partialLi.overall.status).toBe("incomplete");
+      expect(partialLi.overall.missingGradeItemIds).toEqual([final!.id]);
+      expect(partialLi.grades[daily!.id]).toBe(100);
+
+      await saveScores(ids.classMain, [
+        { studentId: li.id, gradeItemId: final!.id, score: 100 },
+      ]);
+    });
+
+    it("得分必须在 0 到满分之间：0 分与满分本身合法，越界被拒绝并提示", async () => {
+      const sheet = await getSheet(ids.classMain);
+      const [daily, midterm, final] = sheet.gradeItems;
+      const zhang = sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+
+      const boundaries = await saveScores(ids.classMain, [
+        { studentId: zhang.id, gradeItemId: daily!.id, score: 0 },
+        { studentId: zhang.id, gradeItemId: midterm!.id, score: 100 },
+        { studentId: zhang.id, gradeItemId: final!.id, score: "100.00" },
+      ]);
+      expect(boundaries.status).toBe(200);
+      const boundariesBody = (await boundaries.json()) as {
+        sheet: GradeSheetJson;
+      };
+      const zhangBoundary = boundariesBody.sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+      expect(zhangBoundary.grades).toEqual({
+        [daily!.id]: 0,
+        [midterm!.id]: 100,
+        [final!.id]: 100,
+      });
+      expect(zhangBoundary.overall.computedScore).toBe(70);
+
+      const rejected: Array<{ score: unknown; word: string }> = [
+        { score: -0.01, word: "得分" },
+        { score: 100.01, word: "得分" },
+        { score: 100.001, word: "两位小数" },
+        { score: "abc", word: "得分" },
+      ];
+      for (const item of rejected) {
+        const response = await saveScores(ids.classMain, [
+          {
+            studentId: zhang.id,
+            gradeItemId: daily!.id,
+            score: item.score as number,
+          },
+        ]);
+        expect(response.status).toBe(400);
+        expect(await errorOf(response)).toContain(item.word);
+      }
+
+      // 被拒绝的写入不能改动已有成绩。
+      const after = await getSheet(ids.classMain);
+      expect(
+        after.students.find((student) => student.studentNumber === "s1001")!
+          .grades[daily!.id],
+      ).toBe(0);
+
+      const notInClass = await saveScores(ids.classMain, [
+        {
+          studentId: ids.studentWang,
+          gradeItemId: daily!.id,
+          score: 50,
+        },
+      ]);
+      expect(notInClass.status).toBe(400);
+      expect(await errorOf(notInClass)).toContain("名单");
+
+      const wrongItem = await saveScores(ids.classMain, [
+        {
+          studentId: zhang.id,
+          gradeItemId: "00000000-0000-4000-8000-000000000000",
+          score: 50,
+        },
+      ]);
+      expect(wrongItem.status).toBe(404);
+      expect(await errorOf(wrongItem)).toContain("成绩项");
+
+      // 恢复张三的分数，便于后续用例。
+      await saveScores(ids.classMain, [
+        { studentId: zhang.id, gradeItemId: daily!.id, score: 80 },
+        { studentId: zhang.id, gradeItemId: midterm!.id, score: 90 },
+        { studentId: zhang.id, gradeItemId: final!.id, score: 85 },
+      ]);
+    });
+
+    it("教师对他人教学班的成绩写入返回 403，管理员可写全部", async () => {
+      const sheet = await getSheet(ids.classMain);
+      const item = sheet.gradeItems[0]!;
+      const zhang = sheet.students[0]!;
+
+      const byForeignTeacher = await saveScores(
+        ids.classMain,
+        [{ studentId: zhang.id, gradeItemId: item.id, score: 60 }],
+        teacherBCookie,
+      );
+      expect(byForeignTeacher.status).toBe(403);
+      expect(await errorOf(byForeignTeacher)).toBe("无权访问。");
+
+      const byStudent = await saveScores(
+        ids.classMain,
+        [{ studentId: zhang.id, gradeItemId: item.id, score: 60 }],
+        studentCookie,
+      );
+      expect(byStudent.status).toBe(403);
+
+      await createGradeItemOk(
+        ids.classOther,
+        { name: "平时", maxScore: 100, weight: 10 },
+        teacherBCookie,
+      );
+      const otherSheet = await getSheet(ids.classOther, adminCookie);
+      const adminWrite = await saveScores(
+        ids.classOther,
+        [
+          {
+            studentId: otherSheet.students[0]!.id,
+            gradeItemId: otherSheet.gradeItems[0]!.id,
+            score: 50,
+          },
+        ],
+        adminCookie,
+      );
+      expect(adminWrite.status).toBe(200);
+      const adminBody = (await adminWrite.json()) as { sheet: GradeSheetJson };
+      expect(adminBody.sheet.students[0]!.overall.computedScore).toBe(5);
+
+      const teacherOnForeign = await saveScores(
+        ids.classOther,
+        [
+          {
+            studentId: otherSheet.students[0]!.id,
+            gradeItemId: otherSheet.gradeItems[0]!.id,
+            score: 70,
+          },
+        ],
+        teacherACookie,
+      );
+      expect(teacherOnForeign.status).toBe(403);
+    });
+
+    it("成绩变更日志的动作枚举预留发布与解锁", async () => {
+      const rows = await queryRows<{ label: string }>(
+        app.schema!,
+        `select e.enumlabel as label
+         from pg_enum e
+         join pg_type t on t.oid = e.enumtypid
+         where t.typname = 'grade_change_action'
+         order by e.enumsortorder`,
+      );
+      expect(rows.map((row) => row.label)).toEqual([
+        "record",
+        "update",
+        "override_overall",
+        "cancel_override",
+        "publish",
+        "unlock",
+      ]);
+    });
+
     it("只有任教教师与教务管理员能读写成绩，学生返回 403", async () => {
       const foreign = await createGradeItem(
         ids.classMain,
