@@ -38,6 +38,10 @@ export default async function AdminGradeEntryPage({
             </Link>
             {" · "}
             <Link href="/admin/teaching-classes">教学班管理</Link>
+            {" · "}
+            <Link href={`/admin/grade-logs?teachingClassId=${id}`}>
+              变更日志
+            </Link>
           </p>
         </div>
         <LogoutButton />
@@ -48,6 +52,7 @@ export default async function AdminGradeEntryPage({
         initialSheet={sheet}
         backHref={`/admin/teaching-classes/${sheet.teachingClass.id}`}
         backLabel="返回教学班"
+        role="administrator"
       />
     </main>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
-import type { GradeSheet, GradeSheetStudent } from "@/lib/grades";
+import type { GradeLock, GradeSheet, GradeSheetStudent } from "@/lib/grades";
 
 type ApiError = { error?: string };
 
@@ -147,9 +147,7 @@ function OverallCell({
         {overall.finalSource === "override" ? "（已覆盖）" : ""}
       </div>
       {overall.missingGradeItemIds.length > 0 ? (
-        <div className="hint">
-          缺 {overall.missingGradeItemIds.length} 项
-        </div>
+        <div className="hint">缺 {overall.missingGradeItemIds.length} 项</div>
       ) : null}
       <OverallControls
         teachingClassId={teachingClassId}
@@ -160,16 +158,179 @@ function OverallCell({
   );
 }
 
+function OverallReadOnlyCell({ student }: { student: GradeSheetStudent }) {
+  const { overall } = student;
+  return (
+    <td>
+      {overall.status === "incomplete" ? (
+        <span className="badge">未完成</span>
+      ) : null}
+      <div>
+        {overall.finalScore === null ? "—" : overall.finalScore}
+        {overall.finalSource === "override" ? "（已覆盖）" : ""}
+      </div>
+      {overall.missingGradeItemIds.length > 0 ? (
+        <div className="hint">缺 {overall.missingGradeItemIds.length} 项</div>
+      ) : null}
+    </td>
+  );
+}
+
+function LockStatus({ lock }: { lock: GradeLock }) {
+  if (lock.state === "published") {
+    return (
+      <p className="notice" role="status">
+        成绩已发布并锁定。学生当前看到的是本次发布的快照；如需修改，必须先由教务管理员解锁。
+      </p>
+    );
+  }
+  if (lock.latestPublication) {
+    return (
+      <p className="notice" role="status">
+        已解锁，可以继续修改。学生当前仍看到第{" "}
+        {lock.latestPublication.version} 次发布的成绩，重新发布后才会更新。
+      </p>
+    );
+  }
+  return <p className="hint">当前为草稿，学生看不到任何成绩数据。</p>;
+}
+
+function PublishPanel({
+  teachingClassId,
+  onSheet,
+}: {
+  teachingClassId: string;
+  onSheet: (sheet: GradeSheet) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function publish() {
+    setPending(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/teaching-classes/${teachingClassId}/publish`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ confirmed: true }),
+        },
+      );
+      if (!response.ok) {
+        setError(await failureMessage(response, "发布失败，请稍后再试。"));
+        setPending(false);
+        return;
+      }
+      const body = (await response.json()) as { sheet: GradeSheet };
+      onSheet(body.sheet);
+      setPending(false);
+    } catch {
+      setError("网络异常，请稍后再试。");
+      setPending(false);
+    }
+  }
+
+  return (
+    <details className="confirm">
+      <summary>发布成绩</summary>
+      <p>
+        发布后全体学生将立即看到本次成绩，并锁定教学班；此后教师与教务管理员都无法直接修改，需教务管理员解锁后才能再次修改。
+      </p>
+      <p>发布前请核对全部成绩项与分数，确认无误后再提交。</p>
+      <button type="button" onClick={publish} disabled={pending}>
+        {pending ? "发布中…" : "确认发布"}
+      </button>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </details>
+  );
+}
+
+function UnlockPanel({
+  teachingClassId,
+  onSheet,
+}: {
+  teachingClassId: string;
+  onSheet: (sheet: GradeSheet) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function unlock(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/teaching-classes/${teachingClassId}/unlock`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reason }),
+        },
+      );
+      if (!response.ok) {
+        setError(await failureMessage(response, "解锁失败，请稍后再试。"));
+        setPending(false);
+        return;
+      }
+      const body = (await response.json()) as { sheet: GradeSheet };
+      onSheet(body.sheet);
+      setReason("");
+      setPending(false);
+    } catch {
+      setError("网络异常，请稍后再试。");
+      setPending(false);
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={unlock}>
+      <p className="hint">
+        解锁后教师可以继续修改成绩；学生仍看到上一次发布的成绩，直到重新发布。解锁理由会写入成绩变更日志。
+      </p>
+      <label className="form-field">
+        <span>解锁理由（必填）</span>
+        <input
+          name="reason"
+          required
+          maxLength={500}
+          placeholder="如：期末成绩录入错误，需更正"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+        />
+      </label>
+      <div className="form-inline">
+        <button type="submit" disabled={pending || reason.trim().length === 0}>
+          {pending ? "解锁中…" : "确认解锁"}
+        </button>
+        {error ? (
+          <span className="form-error" role="alert">
+            {error}
+          </span>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
 export function GradeSheetScreen({
   teachingClassId,
   initialSheet,
   backHref,
   backLabel,
+  role,
 }: {
   teachingClassId: string;
   initialSheet: GradeSheet;
   backHref: string;
   backLabel: string;
+  role: "teacher" | "administrator";
 }) {
   const [sheet, setSheet] = useState(initialSheet);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -180,7 +341,8 @@ export function GradeSheetScreen({
   const [itemPending, setItemPending] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
-  const { gradeItems, students } = sheet;
+  const { gradeItems, students, lock } = sheet;
+  const locked = lock.state === "published";
 
   function valueOf(student: GradeSheetStudent, gradeItemId: string): string {
     const key = cellKey(student.id, gradeItemId);
@@ -307,6 +469,28 @@ export function GradeSheetScreen({
   return (
     <>
       <section>
+        <h2>发布与锁定</h2>
+        <LockStatus lock={lock} />
+        {locked ? (
+          role === "administrator" ? (
+            <UnlockPanel teachingClassId={teachingClassId} onSheet={setSheet} />
+          ) : (
+            <p className="hint">
+              需要修改请联系教务管理员解锁。解锁后学生仍看到上一次发布的成绩，重新发布后才会更新。
+            </p>
+          )
+        ) : (
+          <PublishPanel
+            teachingClassId={teachingClassId}
+            onSheet={(next) => {
+              setDraft({});
+              setSheet(next);
+            }}
+          />
+        )}
+      </section>
+
+      <section>
         <h2>成绩项</h2>
         {sheet.weightWarning === null ? (
           <p className="hint">
@@ -345,45 +529,53 @@ export function GradeSheetScreen({
           </table>
         )}
 
-        <form className="form form-inline" onSubmit={createItem}>
-          <label className="form-field">
-            <span>名称</span>
-            <input name="name" required placeholder="如：平时" />
-          </label>
-          <label className="form-field">
-            <span>满分</span>
-            <input
-              name="maxScore"
-              required
-              inputMode="decimal"
-              placeholder="如：100"
-            />
-          </label>
-          <label className="form-field">
-            <span>权重（%）</span>
-            <input
-              name="weight"
-              required
-              inputMode="decimal"
-              placeholder="如：30"
-            />
-          </label>
-          <button type="submit" disabled={itemPending}>
-            {itemPending ? "添加中…" : "添加成绩项"}
-          </button>
-          {itemError ? (
-            <p className="form-error" role="alert">
-              {itemError}
-            </p>
-          ) : null}
-        </form>
+        {locked ? null : (
+          <form className="form form-inline" onSubmit={createItem}>
+            <label className="form-field">
+              <span>名称</span>
+              <input name="name" required placeholder="如：平时" />
+            </label>
+            <label className="form-field">
+              <span>满分</span>
+              <input
+                name="maxScore"
+                required
+                inputMode="decimal"
+                placeholder="如：100"
+              />
+            </label>
+            <label className="form-field">
+              <span>权重（%）</span>
+              <input
+                name="weight"
+                required
+                inputMode="decimal"
+                placeholder="如：30"
+              />
+            </label>
+            <button type="submit" disabled={itemPending}>
+              {itemPending ? "添加中…" : "添加成绩项"}
+            </button>
+            {itemError ? (
+              <p className="form-error" role="alert">
+                {itemError}
+              </p>
+            ) : null}
+          </form>
+        )}
       </section>
 
       <section>
         <h2>成绩录入</h2>
-        <p className="hint">
-          键盘：Tab 横向移动到下一格，Enter 或 ↑ ↓ 纵向移动。
-        </p>
+        {locked ? (
+          <p className="hint">
+            已发布并锁定，以下为本次发布时的成绩快照，仅可查看。
+          </p>
+        ) : (
+          <p className="hint">
+            键盘：Tab 横向移动到下一格，Enter 或 ↑ ↓ 纵向移动。
+          </p>
+        )}
 
         {students.length === 0 ? (
           <p>该教学班还没有学生，无法录入成绩。</p>
@@ -414,63 +606,77 @@ export function GradeSheetScreen({
                     <tr key={student.id}>
                       <td>{student.studentNumber}</td>
                       <td>{student.name}</td>
-                      {gradeItems.map((item, column) => (
-                        <td key={item.id}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            data-student-id={student.id}
-                            data-grade-item-id={item.id}
-                            data-cell-row={row}
-                            data-cell-col={column}
-                            aria-label={`${student.name} 的 ${item.name} 得分`}
-                            value={valueOf(student, item.id)}
-                            onChange={(event) =>
-                              updateCell(
-                                student.id,
-                                item.id,
-                                event.target.value,
-                              )
-                            }
-                            onKeyDown={(event) =>
-                              onCellKeyDown(event, row, column)
-                            }
-                          />
-                        </td>
-                      ))}
-                      <OverallCell
-                        teachingClassId={teachingClassId}
-                        student={student}
-                        onSheet={setSheet}
-                      />
+                      {gradeItems.map((item, column) =>
+                        locked ? (
+                          <td key={item.id}>
+                            {valueOf(student, item.id) === ""
+                              ? "缺考"
+                              : valueOf(student, item.id)}
+                          </td>
+                        ) : (
+                          <td key={item.id}>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              data-student-id={student.id}
+                              data-grade-item-id={item.id}
+                              data-cell-row={row}
+                              data-cell-col={column}
+                              aria-label={`${student.name} 的 ${item.name} 得分`}
+                              value={valueOf(student, item.id)}
+                              onChange={(event) =>
+                                updateCell(
+                                  student.id,
+                                  item.id,
+                                  event.target.value,
+                                )
+                              }
+                              onKeyDown={(event) =>
+                                onCellKeyDown(event, row, column)
+                              }
+                            />
+                          </td>
+                        ),
+                      )}
+                      {locked ? (
+                        <OverallReadOnlyCell student={student} />
+                      ) : (
+                        <OverallCell
+                          teachingClassId={teachingClassId}
+                          student={student}
+                          onSheet={setSheet}
+                        />
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <div className="form form-inline">
-              <button
-                type="button"
-                onClick={saveScores}
-                disabled={saving || Object.keys(draft).length === 0}
-              >
-                {saving ? "保存中…" : "保存成绩"}
-              </button>
-              <span className="hint">
-                未保存修改 {Object.keys(draft).length} 处
-              </span>
-              {savedMessage ? (
-                <span className="form-notice" role="status">
-                  {savedMessage}
+            {locked ? null : (
+              <div className="form form-inline">
+                <button
+                  type="button"
+                  onClick={saveScores}
+                  disabled={saving || Object.keys(draft).length === 0}
+                >
+                  {saving ? "保存中…" : "保存成绩"}
+                </button>
+                <span className="hint">
+                  未保存修改 {Object.keys(draft).length} 处
                 </span>
-              ) : null}
-              {gridError ? (
-                <span className="form-error" role="alert">
-                  {gridError}
-                </span>
-              ) : null}
-            </div>
+                {savedMessage ? (
+                  <span className="form-notice" role="status">
+                    {savedMessage}
+                  </span>
+                ) : null}
+                {gridError ? (
+                  <span className="form-error" role="alert">
+                    {gridError}
+                  </span>
+                ) : null}
+              </div>
+            )}
           </>
         )}
       </section>

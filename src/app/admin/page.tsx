@@ -33,6 +33,8 @@ export default async function AdminPage() {
             <Link href="/admin/courses">课程管理</Link>
             {" · "}
             <Link href="/admin/teaching-classes">教学班管理</Link>
+            {" · "}
+            <Link href="/admin/grade-logs">成绩变更日志</Link>
           </p>
         </div>
         <div className="header-actions">
