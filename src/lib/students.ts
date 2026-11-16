@@ -222,44 +222,56 @@ export async function updateStudent(
 ): Promise<UpdateStudentResult> {
   const sql = getDb();
 
-  if (input.administrativeClassId !== undefined) {
-    const classes = await sql<{ id: string }[]>`
-      select id from administrative_classes
-      where id = ${input.administrativeClassId}
-      limit 1
-    `;
-    if (classes.length === 0) {
-      return { ok: false, status: 400, error: "所选行政班不存在。" };
+  return sql.begin(async (tx) => {
+    if (input.administrativeClassId !== undefined) {
+      const classes = await tx<{ id: string }[]>`
+        select id from administrative_classes
+        where id = ${input.administrativeClassId}
+        limit 1
+      `;
+      if (classes.length === 0) {
+        return { ok: false, status: 400, error: "所选行政班不存在。" };
+      }
     }
-  }
 
-  const rows = await sql<StudentRow[]>`
-    with updated as (
-      update students
-      set name = coalesce(${input.name ?? null}::text, name),
-          administrative_class_id = coalesce(
-            ${input.administrativeClassId ?? null}::uuid,
-            administrative_class_id
-          ),
-          enrollment_status = coalesce(
-            ${input.enrollmentStatus ?? null}::enrollment_status,
-            enrollment_status
-          ),
-          updated_at = now()
-      where id = ${id}
-      returning *
-    )
-    select u.id, u.student_number, u.name, u.enrollment_status,
-           u.administrative_class_id, c.name as administrative_class_name
-    from updated u
-    join administrative_classes c on c.id = u.administrative_class_id
-  `;
+    const rows = await tx<StudentRow[]>`
+      with updated as (
+        update students
+        set name = coalesce(${input.name ?? null}::text, name),
+            administrative_class_id = coalesce(
+              ${input.administrativeClassId ?? null}::uuid,
+              administrative_class_id
+            ),
+            enrollment_status = coalesce(
+              ${input.enrollmentStatus ?? null}::enrollment_status,
+              enrollment_status
+            ),
+            updated_at = now()
+        where id = ${id}
+        returning *
+      )
+      select u.id, u.student_number, u.name, u.enrollment_status,
+             u.administrative_class_id, c.name as administrative_class_name
+      from updated u
+      join administrative_classes c on c.id = u.administrative_class_id
+    `;
 
-  const row = rows[0];
-  if (!row) {
-    return { ok: false, status: 404, error: "学生不存在。" };
-  }
-  return { ok: true, student: toSummary(row) };
+    const row = rows[0];
+    if (!row) {
+      return { ok: false, status: 404, error: "学生不存在。" };
+    }
+
+    // 账号的显示姓名与学生姓名保持一致；登录名（学号）不随之改变。
+    if (input.name !== undefined) {
+      await tx`
+        update accounts
+        set display_name = ${input.name}, updated_at = now()
+        where login_name = ${row.student_number}
+      `;
+    }
+
+    return { ok: true, student: toSummary(row) };
+  });
 }
 
 /**

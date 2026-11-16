@@ -642,6 +642,41 @@ describe("行政班与学生", () => {
       expect(((await invalid.json()) as Json).error).toContain("学籍状态");
     });
 
+    it("修改学生姓名时同步账号显示名，登录名不变", async () => {
+      const administrativeClass = await createAdministrativeClass("高二 7 班");
+      const created = await createStudent({
+        studentNumber: "s2025141",
+        name: "原名生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+
+      const renamed = await api(
+        "PATCH",
+        `/api/admin/students/${studentId}`,
+        { name: "改名生" },
+        adminCookie,
+      );
+      expect(renamed.status).toBe(200);
+
+      const rows = await queryRows<{
+        display_name: string;
+        login_name: string;
+      }>(
+        app.schema!,
+        "select display_name, login_name from accounts where login_name = 's2025141'",
+      );
+      expect(rows[0]).toEqual({
+        display_name: "改名生",
+        login_name: "s2025141",
+      });
+
+      const attempt = await login("s2025141", "初始密码1234");
+      expect(attempt.response.status).toBe(200);
+    });
+
     it("转到不存在的行政班、修改不存在的学生返回可读错误", async () => {
       const administrativeClass = await createAdministrativeClass("高二 6 班");
       const created = await createStudent({
