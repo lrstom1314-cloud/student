@@ -433,6 +433,50 @@ describe("CSV 批量导入学生", () => {
     }
   });
 
+  it("表头缺失或列名不匹配时整体拒绝，并说明期望的列且不写入任何数据", async () => {
+    await createAdministrativeClass("高二 7 班");
+
+    const wrongName = await importCsv(
+      "学号,姓名,班级,学籍状态\r\ns2026201,表头生,高二 7 班,在读\r\n",
+    );
+    expect(wrongName.status).toBe(400);
+    const wrongNameBody = (await wrongName.json()) as Json;
+    expect(wrongNameBody.error).toContain("表头不匹配");
+    expect(wrongNameBody.error).toContain("行政班");
+    expect(wrongNameBody.expectedColumns).toEqual([
+      "学号",
+      "姓名",
+      "行政班",
+      "学籍状态",
+    ]);
+
+    const missingColumn = await importCsv(
+      "学号,姓名,行政班\r\ns2026202,缺列生,高二 7 班\r\n",
+    );
+    expect(missingColumn.status).toBe(400);
+    const missingBody = (await missingColumn.json()) as Json;
+    expect(missingBody.error).toContain("学籍状态");
+    for (const column of ["学号", "姓名", "行政班", "学籍状态"]) {
+      expect(String(missingBody.error)).toContain(column);
+    }
+
+    const empty = await importCsv("\uFEFF");
+    expect(empty.status).toBe(400);
+    expect(((await empty.json()) as Json).error).toContain("文件为空");
+
+    const duplicated = await importCsv(
+      "学号,学号,姓名,行政班,学籍状态\r\ns2026203,s2026204,重复表头,高二 7 班,在读\r\n",
+    );
+    expect(duplicated.status).toBe(400);
+    expect(((await duplicated.json()) as Json).error).toContain("出现了多次");
+
+    const written = await queryRows<{ count: number }>(
+      app.schema!,
+      "select count(*)::int as count from students where student_number like 's20262%'",
+    );
+    expect(written[0]!.count).toBe(0);
+  });
+
   it("CSV 不接受密码列：新学生仍使用系统生成的初始密码并强制改密", async () => {
     await createAdministrativeClass("高二 6 班");
 
