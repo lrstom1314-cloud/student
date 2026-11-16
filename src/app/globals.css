@@ -291,6 +291,92 @@ button:disabled {
   width: 5rem;
 }
 
+/* 学生成绩：总评始终可见，成绩项明细收在 details 里。
+   每条成绩项用网格排布，窄屏切成单列并给每个值加标签，
+   避免像宽表那样横向滚动。 */
+.grade-courses {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.grade-course {
+  border: 1px solid #d5dbe1;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.grade-course h3 {
+  margin: 0 0 0.25rem;
+}
+
+.grade-overall {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.grade-overall-label {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.grade-score {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.grade-details {
+  margin-top: 0.25rem;
+}
+
+.grade-details summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.35rem 0;
+}
+
+.grade-items {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.grade-item {
+  border-top: 1px solid #e3e8ed;
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr));
+  padding-top: 0.35rem;
+}
+
+.grade-item-head {
+  border-top: none;
+  color: #666;
+  font-size: 0.8rem;
+  padding-top: 0;
+}
+
+.grade-item > span {
+  overflow-wrap: anywhere;
+}
+
+.grade-item-name {
+  font-weight: 600;
+}
+
+.grade-missing {
+  color: #8a4b00;
+}
+
+.grade-pending p {
+  margin: 0.2rem 0;
+}
+
 @media (max-width: 720px) {
   .page {
     padding: 2rem 1rem;
@@ -312,5 +398,18 @@ button:disabled {
 
   .table .actions {
     flex-wrap: nowrap;
+  }
+
+  .grade-item {
+    grid-template-columns: 1fr;
+  }
+
+  .grade-item-head {
+    display: none;
+  }
+
+  .grade-item > span[data-label]::before {
+    color: #666;
+    content: attr(data-label) "：";
   }
 }

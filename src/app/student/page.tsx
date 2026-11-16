@@ -1,6 +1,9 @@
 import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
-import { listStudentPublishedGrades } from "@/lib/student-grades";
+import {
+  getStudentGradeReport,
+  type StudentGradeCourse,
+} from "@/lib/student-grades";
 import { getStudentTimetable } from "@/lib/student-timetable";
 import {
   periodLabel,
@@ -62,19 +65,92 @@ function WeekScope({
   );
 }
 
+function GradeCourseCard({ course }: { course: StudentGradeCourse }) {
+  const title =
+    course.teachingClass.displayName !== course.teachingClass.courseName
+      ? `${course.teachingClass.courseName} · ${course.teachingClass.displayName}`
+      : course.teachingClass.courseName;
+
+  return (
+    <article className="grade-course">
+      <h3>{title}</h3>
+      <p className="hint">
+        {course.teachingClass.termLabel} · {course.teachingClass.teacherName}
+      </p>
+
+      {course.published ? (
+        <>
+          <div className="grade-overall">
+            <span className="grade-overall-label">总评</span>
+            {course.overall.finalScore === null ? (
+              <span className="badge badge-muted">总评未完成</span>
+            ) : (
+              <span className="grade-score">
+                <strong>{course.overall.finalScore}</strong>
+              </span>
+            )}
+            {course.overall.finalSource === "override" ? (
+              <span className="badge">教师调整</span>
+            ) : null}
+          </div>
+
+          <details className="grade-details">
+            <summary>成绩明细</summary>
+            {course.overall.status === "incomplete" ? (
+              <p className="hint" role="status">
+                {
+                  "本次发布中有些成绩项尚未录入；未录入按空白处理，不计 0 分，总评暂不计算。"
+                }
+              </p>
+            ) : null}
+            <ul className="grade-items">
+              <li className="grade-item grade-item-head" aria-hidden="true">
+                <span className="grade-item-name">成绩项</span>
+                <span data-label="满分">满分</span>
+                <span data-label="得分">得分</span>
+                <span data-label="权重">权重</span>
+              </li>
+              {course.items.map((item) => (
+                <li className="grade-item" key={item.gradeItemId}>
+                  <span className="grade-item-name">{item.name}</span>
+                  <span data-label="满分">{item.maxScore}</span>
+                  <span data-label="得分">
+                    {item.score === null ? (
+                      <span className="grade-missing">未录入</span>
+                    ) : (
+                      item.score
+                    )}
+                  </span>
+                  <span data-label="权重">{item.weight}%</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </>
+      ) : (
+        <div className="notice grade-pending" role="status">
+          <p>暂无成绩</p>
+          <p className="hint">
+            任课教师尚未发布本次成绩；发布后这里会显示你的总评和成绩项明细。
+          </p>
+        </div>
+      )}
+    </article>
+  );
+}
+
 export default async function StudentPage() {
   const user = await requirePageUser("/student", { roles: ["student"] });
   const timetable = await getStudentTimetable(user.id);
   const { currentTerm, entries } = timetable;
-  const courses = currentTerm
-    ? await listStudentPublishedGrades(user.id, currentTerm.id)
-    : [];
+  const report = await getStudentGradeReport(user.id);
+  const courses = report.courses;
 
   return (
     <main className="page wide">
       <header className="page-header">
         <div>
-          <h1>我的课表</h1>
+          <h1>我的课表与成绩</h1>
           <p>
             当前账号：{user.displayName}（{user.loginName}）
           </p>
@@ -172,60 +248,18 @@ export default async function StudentPage() {
         <section>
           <h2>我的成绩</h2>
           {courses.length === 0 ? (
-            <p>本学期还没有加入任何教学班。</p>
+            <p className="notice" role="status">
+              本学期你还没有加入任何教学班，因此没有成绩可查。请联系教务管理员确认教学班名单。
+            </p>
           ) : (
-            courses.map((course) => (
-              <article key={course.teachingClass.id} className="year-group">
-                <h3>
-                  {course.teachingClass.courseName}
-                  {course.teachingClass.displayName !==
-                  course.teachingClass.courseName
-                    ? ` · ${course.teachingClass.displayName}`
-                    : ""}
-                </h3>
-                <p className="hint">
-                  {course.teachingClass.termLabel} ·{" "}
-                  {course.teachingClass.teacherName}
-                </p>
-                {course.published ? (
-                  <>
-                    <p>
-                      总评：
-                      {course.overall.status === "incomplete" ? (
-                        <span className="badge">未完成</span>
-                      ) : (
-                        <strong>{course.overall.finalScore ?? "—"}</strong>
-                      )}
-                    </p>
-                    <details>
-                      <summary>成绩明细</summary>
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>成绩项</th>
-                            <th>满分</th>
-                            <th>权重</th>
-                            <th>得分</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {course.items.map((item) => (
-                            <tr key={item.gradeItemId}>
-                              <td>{item.name}</td>
-                              <td>{item.maxScore}</td>
-                              <td>{item.weight}%</td>
-                              <td>{item.score === null ? "缺考" : item.score}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </details>
-                  </>
-                ) : (
-                  <p>暂无成绩</p>
-                )}
-              </article>
-            ))
+            <div className="grade-courses">
+              {courses.map((course) => (
+                <GradeCourseCard
+                  key={course.teachingClass.id}
+                  course={course}
+                />
+              ))}
+            </div>
           )}
         </section>
       ) : null}
