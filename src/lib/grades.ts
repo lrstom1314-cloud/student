@@ -167,7 +167,7 @@ type CalcItem = { id: string; maxScaled: number; weightScaled: number };
 /**
  * 总评 = Σ(得分 ÷ 满分 × 权重)，权重的单位是百分比。
  * 返回放大 100 倍并四舍五入（半入）到两位小数的整数；
- * 任一分项缺分或没有成绩项时返回 null，绝不把缺失当 0 参与计算。
+ * 任一成绩项缺分或没有成绩项时返回 null，绝不把缺失当 0 参与计算。
  */
 function computeOverallHundredths(
   items: CalcItem[],

@@ -55,7 +55,7 @@ export default async function AdminTermsPage() {
       <section>
         <h2>全部学年与学期</h2>
         <p className="hint">
-          开学日期指教学第 1 周的起始日，用于把今天换算成当前教学第几周；
+          开学日期指第 1 周的第一天，用于把今天换算成当前教学第几周；
           不设置时学生端仍能查看课表，但不会标出单双周课程本周是否要上。
         </p>
         {overview.academicYears.length === 0 ? (

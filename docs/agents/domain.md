@@ -33,6 +33,16 @@
 │   │   ├── 0001-course-and-teaching-class.md
 │   │   ├── 0002-single-tenant.md
 │   │   └── 0003-typescript-monolith-postgres.md
-│   └── agents/          ← 本目录，供 agent 读取的配置
+│   ├── agents/          ← 本目录，供 agent 读取的配置
+│   └── operations.md
 └── src/
 ```
+
+## 测试缝的例外
+
+规格要求「只有一条测试缝：HTTP 边界」。这条规则的**例外**只有一种，且已被允许：
+
+- 直连数据库（`tests/support/db.ts` 的 `queryRows` 等）可以用于**准备夹具**与**断言持久化结果**，例如「密码是 Argon2id 哈希」「总评确实落库为 null」。
+- 不得用直连 SQL **替代** HTTP 断言来验证业务行为。一个行为若能从响应里看出来，就必须从响应里看。
+
+换句话说：数据库是**观察持久化副作用**的窗口，不是绕过接口的捷径。审查时按这条判断，不要把合法的夹具查询当成违规。

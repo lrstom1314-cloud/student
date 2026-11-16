@@ -15,3 +15,7 @@
 ### Domain docs
 
 单上下文布局：根目录 `GLOSSARY.md` 配合 `docs/adr/`。见 `docs/agents/domain.md`。
+
+### 实现者简报
+
+开工前先读 `docs/agents/implementer-brief.md`（环境事实、工作边界、加迁移与写文案的规矩）。

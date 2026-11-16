@@ -6,7 +6,7 @@ import type { WeekParity } from "@/db/schema";
  * 校历按自然日运行，使用学校所在时区（Asia/Shanghai）判断今天，
  * 避免服务器部署在 UTC 时，晚上 8 点之后被算成第二天。
  * `starts_on` 表示第 1 周的起始日（周一）；不要求必须是周一，
- * 只要管理员按本校校历填写即可。
+ * 只要教务管理员按本校校历填写即可。
  */
 export const SCHOOL_TIME_ZONE = "Asia/Shanghai";
 
