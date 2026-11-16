@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * 把某个学期设为全局唯一的当前学期。
  *
  * 这是会影响所有人的切换，接口要求显式 confirmed=true：
- * 未确认时返回 409 与可展示给管理员的确认文案，前端据此弹出确认。
+ * 未确认时返回 409 与可展示给教务管理员的确认文案，前端据此弹出确认。
  */
 export async function POST(request: Request) {
   const guard = await requireApiUser({ roles: ["administrator"] });

@@ -190,7 +190,7 @@ export function SetStartDateForm({
           type="date"
           name="startsOn"
           defaultValue={startsOn ?? ""}
-          aria-label={`${termLabel} 的教学第 1 周起始日期`}
+          aria-label={`${termLabel} 的开学日期`}
         />
       </label>
       <button type="submit" disabled={pending}>
