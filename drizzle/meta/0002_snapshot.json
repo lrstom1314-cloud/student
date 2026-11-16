@@ -1,9 +1,50 @@
 {
-  "id": "0647013a-cc96-4e1d-8c9e-9c4144da9153",
+  "id": "92be7b3a-3ecf-4ec9-999f-840a4b572678",
   "prevId": "83ea738e-979d-4f9b-98b0-ed176f50e8e0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.academic_years": {
+      "name": "academic_years",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "start_year": {
+          "name": "start_year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "academic_years_start_year_unique": {
+          "name": "academic_years_start_year_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "start_year"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.accounts": {
       "name": "accounts",
       "schema": "",
@@ -78,54 +119,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "login_name"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.administrative_classes": {
-      "name": "administrative_classes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "administrative_classes_name_unique": {
-          "name": "administrative_classes_name_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "name"
           ]
         }
       },
@@ -231,55 +224,22 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.students": {
-      "name": "students",
+    "public.term_settings": {
+      "name": "term_settings",
       "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": true,
           "notNull": true,
-          "default": "gen_random_uuid()"
+          "default": "'singleton'"
         },
-        "student_number": {
-          "name": "student_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "administrative_class_id": {
-          "name": "administrative_class_id",
+        "current_term_id": {
+          "name": "current_term_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
-        },
-        "enrollment_status": {
-          "name": "enrollment_status",
-          "type": "enrollment_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'enrolled'"
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": false
         },
         "updated_at": {
           "name": "updated_at",
@@ -289,27 +249,77 @@
           "default": "now()"
         }
       },
+      "indexes": {},
+      "foreignKeys": {
+        "term_settings_current_term_id_terms_id_fk": {
+          "name": "term_settings_current_term_id_terms_id_fk",
+          "tableFrom": "term_settings",
+          "tableTo": "terms",
+          "columnsFrom": [
+            "current_term_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "term_settings_singleton": {
+          "name": "term_settings_singleton",
+          "value": "\"term_settings\".\"id\" = 'singleton'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.terms": {
+      "name": "terms",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "academic_year_id": {
+          "name": "academic_year_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "half": {
+          "name": "half",
+          "type": "term_half",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
       "indexes": {
-        "students_administrative_class_id_idx": {
-          "name": "students_administrative_class_id_idx",
+        "terms_academic_year_id_half_unique": {
+          "name": "terms_academic_year_id_half_unique",
           "columns": [
             {
-              "expression": "administrative_class_id",
+              "expression": "academic_year_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "students_account_id_unique": {
-          "name": "students_account_id_unique",
-          "columns": [
+            },
             {
-              "expression": "account_id",
+              "expression": "half",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -319,28 +329,30 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "terms_academic_year_id_idx": {
+          "name": "terms_academic_year_id_idx",
+          "columns": [
+            {
+              "expression": "academic_year_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
-        "students_administrative_class_id_administrative_classes_id_fk": {
-          "name": "students_administrative_class_id_administrative_classes_id_fk",
-          "tableFrom": "students",
-          "tableTo": "administrative_classes",
+        "terms_academic_year_id_academic_years_id_fk": {
+          "name": "terms_academic_year_id_academic_years_id_fk",
+          "tableFrom": "terms",
+          "tableTo": "academic_years",
           "columnsFrom": [
-            "administrative_class_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "students_account_id_accounts_id_fk": {
-          "name": "students_account_id_accounts_id_fk",
-          "tableFrom": "students",
-          "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
+            "academic_year_id"
           ],
           "columnsTo": [
             "id"
@@ -350,15 +362,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "students_student_number_unique": {
-          "name": "students_student_number_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "student_number"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -374,14 +378,12 @@
         "administrator"
       ]
     },
-    "public.enrollment_status": {
-      "name": "enrollment_status",
+    "public.term_half": {
+      "name": "term_half",
       "schema": "public",
       "values": [
-        "enrolled",
-        "suspended",
-        "transferred",
-        "graduated"
+        "first",
+        "second"
       ]
     }
   },

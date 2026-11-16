@@ -137,6 +137,45 @@ button:disabled {
   margin: 0;
 }
 
+.badge {
+  background: #e7f0f8;
+  border: 1px solid #b9cfe3;
+  border-radius: 999px;
+  color: #24527a;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+}
+
+.confirm {
+  max-width: 22rem;
+}
+
+.confirm summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.35rem 0;
+}
+
+.confirm p {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 0.4rem 0;
+}
+
+.year-group {
+  border-top: 1px solid #d5dbe1;
+  margin-top: 1.25rem;
+  padding-top: 0.25rem;
+}
+
+.year-group h3 {
+  font-size: 1.05rem;
+}
+
+.term-create {
+  margin: 0.75rem 0 0;
+}
+
 .form-notice {
   color: #1e6b3a;
   font-size: 0.85rem;

@@ -30,12 +30,11 @@ export function internalError(error: unknown): NextResponse {
   return errorResponse("服务暂时不可用，请稍后再试。", 500);
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 路径参数中的 UUID；不合格按「资源不存在」处理。 */
-export function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value);
+/** 只接受标准 UUID，避免把非法字符串送进数据库触发语法错误。 */
+export function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
 }
 
 /** PostgreSQL 唯一约束冲突。 */

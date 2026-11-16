@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { LogoutButton } from "@/components/logout-button";
 import { listAccounts } from "@/lib/accounts";
 import { requirePageUser } from "@/lib/auth";
@@ -24,6 +26,9 @@ export default async function AdminPage() {
           <h1>账号管理</h1>
           <p>
             当前账号：{user.displayName}（{user.loginName}）
+          </p>
+          <p>
+            <Link href="/admin/terms">学年与学期</Link>
           </p>
         </div>
         <div className="header-actions">

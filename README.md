@@ -122,7 +122,8 @@ npm run db:migrate                         # 应用到 DATABASE_URL 指向的数
 
 - `drizzle/0000_baseline.sql` 是空基线，只用于建立迁移记账。
 - `drizzle/0001_accounts_and_sessions.sql` 建立账号与会话表，是第一个业务迁移。
-- `drizzle/0002_administrative_classes_and_students.sql` 建立行政班与学生学籍表。
+- `drizzle/0002_academic_years_and_terms.sql` 建立学年与学期表。
+- `drizzle/0003_administrative_classes_and_students.sql` 建立行政班与学生学籍表。
 - 已应用的迁移记录在 `drizzle.__drizzle_migrations`，重复执行不会再次应用。
 - 生成迁移后，`npm run db:generate` 会自动去掉 drizzle-kit 写入的 `"public".` 限定，
   让同一份迁移能在测试的独立 schema 中执行；不要手工改回。

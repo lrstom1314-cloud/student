@@ -19,8 +19,15 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1794848532790,
-      "tag": "0002_administrative_classes_and_students",
+      "when": 1794848572244,
+      "tag": "0002_academic_years_and_terms",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794848860733,
+      "tag": "0003_administrative_classes_and_students",
       "breakpoints": true
     }
   ]
