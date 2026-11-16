@@ -1,0 +1,28 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  margin: 0 auto;
+  max-width: 40rem;
+  padding: 4rem 1.5rem;
+}
+
+.page h1 {
+  font-size: 1.75rem;
+  margin-bottom: 1rem;
+}
+
+.page p {
+  line-height: 1.8;
+}
