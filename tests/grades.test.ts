@@ -209,6 +209,33 @@ async function saveScores(
   );
 }
 
+async function setOverall(
+  teachingClassId: string,
+  studentId: string,
+  score: unknown,
+  cookie: string = teacherACookie,
+): Promise<Response> {
+  return api(
+    "PUT",
+    `/api/teaching-classes/${teachingClassId}/overalls/${studentId}`,
+    { score },
+    cookie,
+  );
+}
+
+async function cancelOverall(
+  teachingClassId: string,
+  studentId: string,
+  cookie: string = teacherACookie,
+): Promise<Response> {
+  return api(
+    "DELETE",
+    `/api/teaching-classes/${teachingClassId}/overalls/${studentId}`,
+    undefined,
+    cookie,
+  );
+}
+
 async function createTeachingClass(input: {
   teacherLogin: string;
   displayName: string;
@@ -773,6 +800,268 @@ describe("成绩项与总评计算", () => {
         { studentId: zhang.id, gradeItemId: midterm!.id, score: 90 },
         { studentId: zhang.id, gradeItemId: final!.id, score: 85 },
       ]);
+    });
+
+    it("教师可覆盖某学生的总评，覆盖后以覆盖值为准并记录原值、新值与操作人", async () => {
+      const sheet = await getSheet(ids.classMain);
+      const zhang = sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+      expect(zhang.overall.computedScore).toBe(85);
+
+      const overridden = await setOverall(ids.classMain, zhang.id, 92);
+      expect(overridden.status).toBe(200);
+      const body = (await overridden.json()) as { sheet: GradeSheetJson };
+      const zhangOverridden = body.sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+      expect(zhangOverridden.overall).toEqual({
+        computedScore: 85,
+        overrideScore: 92,
+        finalScore: 92,
+        finalSource: "override",
+        status: "complete",
+        missingGradeItemIds: [],
+      });
+
+      const stored = await queryRows<{
+        computed_score: string | null;
+        override_score: string | null;
+        override_updated_by: string | null;
+      }>(
+        app.schema!,
+        `select computed_score::text as computed_score,
+           override_score::text as override_score,
+           override_updated_by
+         from grade_overalls
+         where teaching_class_id = $1 and student_id = $2`,
+        [ids.classMain, zhang.id],
+      );
+      const teacherAId = (
+        await queryRows<{ id: string }>(
+          app.schema!,
+          "select id from accounts where login_name = $1",
+          [TEACHER_A_LOGIN],
+        )
+      )[0]!.id;
+      expect(stored).toEqual([
+        {
+          computed_score: "85.00",
+          override_score: "92.00",
+          override_updated_by: teacherAId,
+        },
+      ]);
+
+      // 再次覆盖：原值是上一次的覆盖值。
+      const again = await setOverall(ids.classMain, zhang.id, 94);
+      expect(again.status).toBe(200);
+      const againBody = (await again.json()) as { sheet: GradeSheetJson };
+      expect(
+        againBody.sheet.students.find(
+          (student) => student.studentNumber === "s1001",
+        )!.overall,
+      ).toMatchObject({ computedScore: 85, overrideScore: 94, finalScore: 94 });
+
+      const logs = await queryRows<{
+        target: string;
+        action: string;
+        old_value: string | null;
+        new_value: string | null;
+        actor_account_id: string;
+        grade_item_id: string | null;
+        created_at: string;
+      }>(
+        app.schema!,
+        `select target, action, old_value::text as old_value,
+           new_value::text as new_value, actor_account_id, grade_item_id,
+           created_at::text as created_at
+         from grade_change_logs
+         where teaching_class_id = $1 and student_id = $2 and target = 'overall'
+         order by created_at, old_value`,
+        [ids.classMain, zhang.id],
+      );
+      expect(logs).toHaveLength(2);
+      expect(logs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            target: "overall",
+            action: "override_overall",
+            old_value: "85.00",
+            new_value: "92.00",
+            actor_account_id: teacherAId,
+            grade_item_id: null,
+          }),
+          expect.objectContaining({
+            target: "overall",
+            action: "override_overall",
+            old_value: "92.00",
+            new_value: "94.00",
+            actor_account_id: teacherAId,
+            grade_item_id: null,
+          }),
+        ]),
+      );
+      expect(logs.every((log) => log.created_at.length > 0)).toBe(true);
+
+      // 覆盖值不合法时被拒绝，现有覆盖保持不变。
+      for (const score of [-1, "abc", 1.234]) {
+        const bad = await setOverall(ids.classMain, zhang.id, score);
+        expect(bad.status).toBe(400);
+        expect(await errorOf(bad)).toContain("总评");
+      }
+      const afterBad = await getSheet(ids.classMain);
+      expect(
+        afterBad.students.find((student) => student.studentNumber === "s1001")!
+          .overall.overrideScore,
+      ).toBe(94);
+    });
+
+    it("可取消覆盖，恢复为系统计算值，且这一动作同样被记录", async () => {
+      const sheet = await getSheet(ids.classMain);
+      const zhang = sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+
+      const cancelled = await cancelOverall(ids.classMain, zhang.id);
+      expect(cancelled.status).toBe(200);
+      const body = (await cancelled.json()) as { sheet: GradeSheetJson };
+      const zhangRestored = body.sheet.students.find(
+        (student) => student.studentNumber === "s1001",
+      )!;
+      expect(zhangRestored.overall).toEqual({
+        computedScore: 85,
+        overrideScore: null,
+        finalScore: 85,
+        finalSource: "computed",
+        status: "complete",
+        missingGradeItemIds: [],
+      });
+
+      const stored = await queryRows<{ override_score: string | null }>(
+        app.schema!,
+        `select override_score::text as override_score
+         from grade_overalls
+         where teaching_class_id = $1 and student_id = $2`,
+        [ids.classMain, zhang.id],
+      );
+      expect(stored).toEqual([{ override_score: null }]);
+
+      const logs = await queryRows<{
+        action: string;
+        old_value: string | null;
+        new_value: string | null;
+      }>(
+        app.schema!,
+        `select action, old_value::text as old_value,
+           new_value::text as new_value
+         from grade_change_logs
+         where teaching_class_id = $1 and student_id = $2
+           and target = 'overall' and action = 'cancel_override'`,
+        [ids.classMain, zhang.id],
+      );
+      expect(logs).toEqual([
+        {
+          action: "cancel_override",
+          old_value: "94.00",
+          new_value: "85.00",
+        },
+      ]);
+
+      const again = await cancelOverall(ids.classMain, zhang.id);
+      expect(again.status).toBe(409);
+      expect(await errorOf(again)).toContain("没有");
+
+      // 他人与学生的覆盖写入同样被拒绝。
+      const byForeign = await setOverall(
+        ids.classMain,
+        zhang.id,
+        90,
+        teacherBCookie,
+      );
+      expect(byForeign.status).toBe(403);
+      const byStudent = await setOverall(
+        ids.classMain,
+        zhang.id,
+        90,
+        studentCookie,
+      );
+      expect(byStudent.status).toBe(403);
+    });
+
+    it("成绩项的录入、修改与清空都写入变更日志", async () => {
+      await createGradeItemOk(
+        ids.classValidation,
+        { name: "记录项", maxScore: 100, weight: 10 },
+        adminCookie,
+      );
+      const sheet = await getSheet(ids.classValidation);
+      const item = sheet.gradeItems[0]!;
+      const student = sheet.students[0]!;
+
+      expect(
+        (
+          await saveScores(ids.classValidation, [
+            { studentId: student.id, gradeItemId: item.id, score: 10 },
+          ])
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await saveScores(ids.classValidation, [
+            { studentId: student.id, gradeItemId: item.id, score: 20 },
+          ])
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await saveScores(ids.classValidation, [
+            { studentId: student.id, gradeItemId: item.id, score: null },
+          ])
+        ).status,
+      ).toBe(200);
+
+      const logs = await queryRows<{
+        target: string;
+        action: string;
+        old_value: string | null;
+        new_value: string | null;
+        grade_item_id: string;
+      }>(
+        app.schema!,
+        `select target, action, old_value::text as old_value,
+           new_value::text as new_value, grade_item_id
+         from grade_change_logs
+         where teaching_class_id = $1 and student_id = $2
+           and target = 'grade_item'`,
+        [ids.classValidation, student.id],
+      );
+
+      expect(logs).toHaveLength(3);
+      expect(logs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            target: "grade_item",
+            action: "record",
+            old_value: null,
+            new_value: "10.00",
+            grade_item_id: item.id,
+          }),
+          expect.objectContaining({
+            target: "grade_item",
+            action: "update",
+            old_value: "10.00",
+            new_value: "20.00",
+            grade_item_id: item.id,
+          }),
+          expect.objectContaining({
+            target: "grade_item",
+            action: "update",
+            old_value: "20.00",
+            new_value: null,
+            grade_item_id: item.id,
+          }),
+        ]),
+      );
     });
 
     it("教师对他人教学班的成绩写入返回 403，管理员可写全部", async () => {

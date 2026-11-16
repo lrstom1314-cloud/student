@@ -608,6 +608,170 @@ export async function saveScores(input: {
   return { ok: true, sheet, updatedCount: outcome.updatedCount };
 }
 
+export type OverallResult =
+  | { ok: true; sheet: GradeSheet }
+  | { ok: false; status: number; error: string };
+
+/** 教师人工覆盖某学生的总评；原值是覆盖前的有效值（上次覆盖值或系统计算值）。 */
+export async function setOverallOverride(input: {
+  teachingClassId: string;
+  studentId: string;
+  user: SessionUser;
+  score: unknown;
+}): Promise<OverallResult> {
+  const access = await authorizeGradeAccess(input.teachingClassId, input.user);
+  if (!access.ok) return access;
+
+  const sql = getDb();
+  const outcome = await sql.begin<
+    { ok: true } | { ok: false; status: number; error: string }
+  >(async (tx) => {
+    const rosterRows = await tx<{ student_id: string }[]>`
+      select student_id from teaching_class_students
+      where teaching_class_id = ${input.teachingClassId}
+        and student_id = ${input.studentId}
+      limit 1
+    `;
+    if (rosterRows.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: "该学生不在本教学班名单中。",
+      };
+    }
+
+    const parsed = parseDecimal(input.score, "总评");
+    if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
+    if (parsed.scaled > MAX_SCORE) {
+      return { ok: false, status: 400, error: "总评不能超过 9999.99。" };
+    }
+
+    const overallRows = await tx<
+      { computed_score: string | null; override_score: string | null }[]
+    >`
+      select computed_score::text as computed_score,
+        override_score::text as override_score
+      from grade_overalls
+      where teaching_class_id = ${input.teachingClassId}
+        and student_id = ${input.studentId}
+      for update
+    `;
+    const current = overallRows[0];
+    const computed = parseStoredDecimal(current?.computed_score ?? null);
+    const previousOverride = parseStoredDecimal(
+      current?.override_score ?? null,
+    );
+    const oldEffective = previousOverride ?? computed;
+
+    // 覆盖值没有变化时不产生新日志。
+    if (previousOverride !== null && previousOverride === parsed.scaled) {
+      return { ok: true };
+    }
+
+    await tx`
+      insert into grade_overalls (
+        teaching_class_id, student_id, override_score,
+        override_updated_at, override_updated_by
+      )
+      values (
+        ${input.teachingClassId}, ${input.studentId},
+        ${scaledToText(parsed.scaled)}, now(), ${input.user.id}
+      )
+      on conflict (teaching_class_id, student_id) do update
+      set override_score = excluded.override_score,
+        override_updated_at = excluded.override_updated_at,
+        override_updated_by = excluded.override_updated_by
+    `;
+
+    await insertGradeChangeLog(tx, {
+      teachingClassId: input.teachingClassId,
+      studentId: input.studentId,
+      gradeItemId: null,
+      target: "overall",
+      action: "override_overall",
+      actorAccountId: input.user.id,
+      oldScaled: oldEffective,
+      newScaled: parsed.scaled,
+    });
+    return { ok: true };
+  });
+
+  if (!outcome.ok) return outcome;
+
+  const sheet = await getGradeSheet(input.teachingClassId);
+  if (!sheet) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  return { ok: true, sheet };
+}
+
+/** 取消覆盖：恢复系统计算值，并把取消动作写入变更日志。 */
+export async function cancelOverallOverride(input: {
+  teachingClassId: string;
+  studentId: string;
+  user: SessionUser;
+}): Promise<OverallResult> {
+  const access = await authorizeGradeAccess(input.teachingClassId, input.user);
+  if (!access.ok) return access;
+
+  const sql = getDb();
+  const outcome = await sql.begin<
+    { ok: true } | { ok: false; status: number; error: string }
+  >(async (tx) => {
+    const overallRows = await tx<
+      { computed_score: string | null; override_score: string | null }[]
+    >`
+      select computed_score::text as computed_score,
+        override_score::text as override_score
+      from grade_overalls
+      where teaching_class_id = ${input.teachingClassId}
+        and student_id = ${input.studentId}
+      for update
+    `;
+    const current = overallRows[0];
+    const previousOverride = parseStoredDecimal(
+      current?.override_score ?? null,
+    );
+    if (current === undefined || previousOverride === null) {
+      return {
+        ok: false,
+        status: 409,
+        error: "该学生当前没有总评覆盖。",
+      };
+    }
+    const computed = parseStoredDecimal(current.computed_score);
+
+    await tx`
+      update grade_overalls
+      set override_score = null,
+        override_updated_at = now(),
+        override_updated_by = ${input.user.id}
+      where teaching_class_id = ${input.teachingClassId}
+        and student_id = ${input.studentId}
+    `;
+
+    await insertGradeChangeLog(tx, {
+      teachingClassId: input.teachingClassId,
+      studentId: input.studentId,
+      gradeItemId: null,
+      target: "overall",
+      action: "cancel_override",
+      actorAccountId: input.user.id,
+      oldScaled: previousOverride,
+      newScaled: computed,
+    });
+    return { ok: true };
+  });
+
+  if (!outcome.ok) return outcome;
+
+  const sheet = await getGradeSheet(input.teachingClassId);
+  if (!sheet) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  return { ok: true, sheet };
+}
+
 export type CreateGradeItemResult =
   | { ok: true; gradeItem: GradeItemSummary; sheet: GradeSheet }
   | { ok: false; status: number; error: string };
