@@ -1125,7 +1125,9 @@ describe("成绩项与总评计算", () => {
         `select e.enumlabel as label
          from pg_enum e
          join pg_type t on t.oid = e.enumtypid
+         join pg_namespace n on n.oid = t.typnamespace
          where t.typname = 'grade_change_action'
+           and n.nspname = current_schema()
          order by e.enumsortorder`,
       );
       expect(rows.map((row) => row.label)).toEqual([

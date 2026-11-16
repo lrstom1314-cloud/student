@@ -1,5 +1,5 @@
 {
-  "id": "0d050c7b-44c1-4782-96eb-dfbfbbdedc06",
+  "id": "e552f9f8-0cf9-4018-923b-23756b04610a",
   "prevId": "51a327a7-34b8-466f-90b9-da90418c4db9",
   "version": "7",
   "dialect": "postgresql",
@@ -428,7 +428,7 @@
       "checkConstraints": {
         "grade_change_logs_target_item": {
           "name": "grade_change_logs_target_item",
-          "value": "(\"grade_change_logs\".\"target\" = 'grade_item' and \"grade_change_logs\".\"grade_item_id\" is not null)\n        or (\"grade_change_logs\".\"target\" = 'overall' and \"grade_change_logs\".\"grade_item_id\" is null)"
+          "value": "\"grade_change_logs\".\"target\" = 'grade_item' or \"grade_change_logs\".\"grade_item_id\" is null"
         }
       },
       "isRLSEnabled": false

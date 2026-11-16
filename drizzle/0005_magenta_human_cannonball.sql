@@ -12,8 +12,7 @@ CREATE TABLE "grade_change_logs" (
 	"new_value" numeric(8, 2),
 	"reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "grade_change_logs_target_item" CHECK (("grade_change_logs"."target" = 'grade_item' and "grade_change_logs"."grade_item_id" is not null)
-        or ("grade_change_logs"."target" = 'overall' and "grade_change_logs"."grade_item_id" is null))
+	CONSTRAINT "grade_change_logs_target_item" CHECK ("grade_change_logs"."target" = 'grade_item' or "grade_change_logs"."grade_item_id" is null)
 );
 --> statement-breakpoint
 CREATE TABLE "grade_items" (

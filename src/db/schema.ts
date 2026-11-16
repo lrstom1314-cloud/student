@@ -430,8 +430,7 @@ export const gradeChangeLogs = pgTable(
     index("grade_change_logs_actor_account_id_idx").on(table.actorAccountId),
     check(
       "grade_change_logs_target_item",
-      sql`(${table.target} = 'grade_item' and ${table.gradeItemId} is not null)
-        or (${table.target} = 'overall' and ${table.gradeItemId} is null)`,
+      sql`${table.target} = 'grade_item' or ${table.gradeItemId} is null`,
     ),
   ],
 );
