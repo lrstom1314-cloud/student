@@ -294,6 +294,14 @@ button:disabled {
 /* 学生成绩：总评始终可见，成绩项明细收在 details 里。
    每条成绩项用网格排布，窄屏切成单列并给每个值加标签，
    避免像宽表那样横向滚动。 */
+.term-switch {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0;
+}
+
 .grade-courses {
   display: grid;
   gap: 0.75rem;

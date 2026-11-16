@@ -4,6 +4,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
 import {
   getStudentGradeReport,
+  resolveStudentGradeTerm,
   type StudentGradeCourse,
 } from "@/lib/student-grades";
 import { getStudentTimetable } from "@/lib/student-timetable";
@@ -141,12 +142,30 @@ function GradeCourseCard({ course }: { course: StudentGradeCourse }) {
   );
 }
 
-export default async function StudentPage() {
+export default async function StudentPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ term?: string | string[] }>;
+}) {
   const user = await requirePageUser("/student", { roles: ["student"] });
   const timetable = await getStudentTimetable(user.id);
   const { currentTerm, entries } = timetable;
-  const report = await getStudentGradeReport(user.id);
+
+  const query = await searchParams;
+  const requestedTermId =
+    typeof query.term === "string" && query.term.length > 0
+      ? query.term
+      : null;
+  const resolution = await resolveStudentGradeTerm(requestedTermId);
+  const report = await getStudentGradeReport(
+    user.id,
+    resolution.ok ? resolution.term : undefined,
+  );
   const courses = report.courses;
+  const viewingHistory =
+    report.term !== null &&
+    report.currentTerm !== null &&
+    report.term.id !== report.currentTerm.id;
 
   return (
     <main className="page wide">
@@ -249,12 +268,42 @@ export default async function StudentPage() {
         </section>
       ) : null}
 
-      {currentTerm ? (
+      {requestedTermId !== null && !resolution.ok ? (
+        <p className="notice" role="status">
+          {`${resolution.error}已改为显示当前学期。`}
+        </p>
+      ) : null}
+
+      {report.term ? (
         <section>
           <h2>我的成绩</h2>
+
+          {report.terms.length > 1 ? (
+            <nav className="term-switch" aria-label="成绩学期">
+              <span className="hint">查看学期：</span>
+              {report.terms.map((term) =>
+                term.id === report.term?.id ? (
+                  <strong key={term.id} aria-current="true">
+                    {term.label}
+                  </strong>
+                ) : (
+                  <Link key={term.id} href={`/student?term=${term.id}`}>
+                    {term.label}
+                  </Link>
+                ),
+              )}
+            </nav>
+          ) : null}
+
+          {viewingHistory ? (
+            <p className="notice" role="status">
+              正在查看历史学期（只读）。学期切换只影响成绩；课表始终显示当前学期。
+            </p>
+          ) : null}
+
           {courses.length === 0 ? (
             <p className="notice" role="status">
-              本学期你还没有加入任何教学班，因此没有成绩可查。请联系教务管理员确认教学班名单。
+              {`${report.term.label}你还没有加入任何教学班，因此没有成绩可查。请联系教务管理员确认教学班名单。`}
             </p>
           ) : (
             <div className="grade-courses">

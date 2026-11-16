@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestApp, type TestApp } from "./support/app";
 import { queryRows } from "./support/db";
 import { databaseUrl, ROOT } from "./support/env";
+import { loginCookie } from "./support/login";
 
 const ADMIN_LOGIN = "admin12";
 const ADMIN_PASSWORD = "管理员密码123";
@@ -73,6 +74,7 @@ type StudentCourseJson =
 type StudentGradeReportJson = {
   currentTerm: TermJson | null;
   term: TermJson | null;
+  terms: TermJson[];
   student: { id: string; studentNumber: string; name: string } | null;
   courses: StudentCourseJson[];
 };
@@ -96,6 +98,7 @@ type GradeSheetJson = {
 const ids = {
   termCurrent: "",
   termPast: "",
+  termFuture: "",
   classOne: "",
   classTwo: "",
   courseMath: "",
@@ -106,6 +109,7 @@ const ids = {
   classEnglish: "",
   classPhysics: "",
   classHistory: "",
+  classHistoryDraft: "",
   classMathDraft: "",
   studentZhang: "",
   studentLi: "",
@@ -135,12 +139,6 @@ async function page(route: string, cookie?: string): Promise<Response> {
     headers: cookie ? { cookie } : {},
     redirect: "manual",
   });
-}
-
-function sessionCookie(response: Response): string {
-  const raw = response.headers.get("set-cookie");
-  if (!raw) return "";
-  return raw.split(";")[0] ?? "";
 }
 
 function bootstrapAccount(input: {
@@ -181,14 +179,9 @@ function bootstrapAccount(input: {
   }
 }
 
-async function login(loginName: string, password: string): Promise<string> {
-  const response = await api("POST", "/api/auth/login", {
-    loginName,
-    password,
-  });
-  expect(response.status).toBe(200);
-  return sessionCookie(response);
-}
+/** 登录逻辑集中在 tests/support/login.ts，这里只固定本文件的 baseUrl。 */
+const login = (loginName: string, password: string): Promise<string> =>
+  loginCookie(app.baseUrl, loginName, password);
 
 async function errorOf(response: Response): Promise<string> {
   const body = (await response.json()) as { error?: unknown };
@@ -414,6 +407,17 @@ describe("学生成绩查询", () => {
       (await pastYear.json()) as { academicYear: { id: string } }
     ).academicYear.id;
 
+    const futureYear = await api(
+      "POST",
+      "/api/admin/academic-years",
+      { startYear: 2027 },
+      adminCookie,
+    );
+    expect(futureYear.status).toBe(201);
+    const futureYearId = (
+      (await futureYear.json()) as { academicYear: { id: string } }
+    ).academicYear.id;
+
     const currentTerm = await api(
       "POST",
       "/api/admin/terms",
@@ -431,6 +435,15 @@ describe("学生成绩查询", () => {
     );
     expect(pastTerm.status).toBe(201);
     ids.termPast = ((await pastTerm.json()) as { term: TermJson }).term.id;
+
+    const futureTerm = await api(
+      "POST",
+      "/api/admin/terms",
+      { academicYearId: futureYearId, half: "first" },
+      adminCookie,
+    );
+    expect(futureTerm.status).toBe(201);
+    ids.termFuture = ((await futureTerm.json()) as { term: TermJson }).term.id;
 
     const classOne = await api(
       "POST",
@@ -521,6 +534,14 @@ describe("学生成绩查询", () => {
       courseId: ids.courseHistory,
       teacherAccountId: teacherA,
       displayName: "高二 1 班 历史（上学期）",
+      studentIds: [ids.studentZhang],
+    });
+    // 历史学期里也放一个从未发布的教学班：切到历史学期后它只能显示「暂无成绩」。
+    ids.classHistoryDraft = await createTeachingClass({
+      termId: ids.termPast,
+      courseId: ids.courseEnglish,
+      teacherAccountId: teacherA,
+      displayName: "高二 1 班 英语（上学期·未发布）",
       studentIds: [ids.studentZhang],
     });
     ids.classMathDraft = await createTeachingClass({
@@ -618,6 +639,24 @@ describe("学生成绩查询", () => {
       ).status,
     ).toBe(200);
     expect((await publish(ids.classHistory)).status).toBe(200);
+
+    // 历史学期的草稿教学班：有分数但从未发布，切到历史学期也不能泄露。
+    const historyDraftItem = await createGradeItem(ids.classHistoryDraft, {
+      name: "听力",
+      maxScore: 100,
+      weight: 100,
+    });
+    expect(
+      (
+        await saveScores(ids.classHistoryDraft, [
+          {
+            studentId: ids.studentZhang,
+            gradeItemId: historyDraftItem.id,
+            score: 61,
+          },
+        ])
+      ).status,
+    ).toBe(200);
 
     const draftItem = await createGradeItem(
       ids.classMathDraft,
@@ -794,7 +833,7 @@ describe("学生成绩查询", () => {
     }
   });
 
-  it("学生只能看自己的成绩：构造请求读他人返回 403/404，也不能指定历史学期", async () => {
+  it("学生只能看自己的成绩：构造请求读他人返回 403/404", async () => {
     const own = await api(
       "GET",
       `/api/student/grades?studentId=${ids.studentZhang}`,
@@ -828,21 +867,6 @@ describe("学生成绩查询", () => {
     );
     expect(byPath.status).toBe(404);
 
-    for (const query of [
-      `?termId=${ids.termPast}`,
-      "?termId=00000000-0000-4000-8000-000000000000",
-      "?termId=not-a-uuid",
-    ]) {
-      const response = await api(
-        "GET",
-        `/api/student/grades${query}`,
-        undefined,
-        studentZhangCookie,
-      );
-      expect(response.status).toBe(400);
-      expect(await errorOf(response)).toContain("当前学期");
-    }
-
     // 张三的成绩里不应出现只在李四班上的英语，或只属于王五的教学班。
     const report = await studentReport();
     const serialized = JSON.stringify(report);
@@ -857,21 +881,107 @@ describe("学生成绩查询", () => {
     expect(html).not.toContain("高二 1 班 历史（上学期）");
   });
 
+  it("可以按学期查看历史成绩：过去学期只读已发布内容，未来与不存在的学期被拒绝", async () => {
+    // 默认仍落在当前学期。
+    const current = await studentReport();
+    expect(current.term?.id).toBe(ids.termCurrent);
+    expect(current.currentTerm?.id).toBe(ids.termCurrent);
+    // 只有学生真正有教学班的学期才出现在切换列表里，按新到旧排列。
+    expect(current.terms.map((term) => term.id)).toEqual([
+      ids.termCurrent,
+      ids.termPast,
+    ]);
+
+    const pastResponse = await api(
+      "GET",
+      `/api/student/grades?termId=${ids.termPast}`,
+      undefined,
+      studentZhangCookie,
+    );
+    expect(pastResponse.status).toBe(200);
+    const past = (await pastResponse.json()) as StudentGradeReportJson;
+    expect(past.currentTerm?.id).toBe(ids.termCurrent);
+    expect(past.term?.id).toBe(ids.termPast);
+    expect(past.term?.label).toBe("2025-2026 学年下学期");
+    expect(
+      past.courses.map((course) => course.teachingClass.id).sort(),
+    ).toEqual([ids.classHistory, ids.classHistoryDraft].sort());
+
+    const history = courseOf(past, ids.classHistory);
+    expect(history.published).toBe(true);
+    if (!history.published) throw new Error("历史应当已发布");
+    expect(history.overall.finalScore).toBe(95);
+
+    // 历史学期里从未发布的教学班仍然只有「暂无成绩」，草稿分数与成绩项都不泄露。
+    const draft = courseOf(past, ids.classHistoryDraft);
+    expect(draft.published).toBe(false);
+    expect(Object.keys(draft).sort()).toEqual(["published", "teachingClass"]);
+
+    // 页面默认当前学期；提供回到历史学期的轻量切换。
+    const currentHtml = await (
+      await page("/student", studentZhangCookie)
+    ).text();
+    expect(currentHtml).toContain(`href="/student?term=${ids.termPast}"`);
+    expect(currentHtml).not.toContain("高二 1 班 历史（上学期）");
+
+    const pastHtml = await (
+      await page(`/student?term=${ids.termPast}`, studentZhangCookie)
+    ).text();
+    expect(pastHtml).toContain("2025-2026 学年下学期");
+    expect(pastHtml).toContain("高二 1 班 历史（上学期）");
+    expect(pastHtml).toContain("<strong>95</strong>");
+    expect(pastHtml).toContain(`href="/student?term=${ids.termCurrent}"`);
+    expect(pastHtml).toContain("暂无成绩");
+    expect(pastHtml).not.toContain("听力");
+    expect(pastHtml).not.toContain("Internal Server Error");
+
+    // 未来学期与不存在的学期都不能被指定。
+    const future = await api(
+      "GET",
+      `/api/student/grades?termId=${ids.termFuture}`,
+      undefined,
+      studentZhangCookie,
+    );
+    expect(future.status).toBe(400);
+    expect(await errorOf(future)).toContain("未来学期");
+
+    const missing = await api(
+      "GET",
+      "/api/student/grades?termId=00000000-0000-4000-8000-000000000000",
+      undefined,
+      studentZhangCookie,
+    );
+    expect(missing.status).toBe(404);
+    expect(await errorOf(missing)).toContain("学期");
+
+    const malformed = await api(
+      "GET",
+      "/api/student/grades?termId=not-a-uuid",
+      undefined,
+      studentZhangCookie,
+    );
+    expect(malformed.status).toBe(400);
+    expect(await errorOf(malformed)).toContain("学期");
+  });
+
   it("只显示当前学期：切换当前学期后只出现该学期的成绩", async () => {
     await setCurrentTerm(ids.termPast);
 
     const report = await studentReport();
     expect(report.currentTerm?.id).toBe(ids.termPast);
-    expect(report.courses.map((course) => course.teachingClass.id)).toEqual([
-      ids.classHistory,
-    ]);
+    expect(
+      report.courses.map((course) => course.teachingClass.id).sort(),
+    ).toEqual([ids.classHistory, ids.classHistoryDraft].sort());
     const history = courseOf(report, ids.classHistory);
     if (!history.published) throw new Error("历史应当已发布");
     expect(history.overall.finalScore).toBe(95);
+    expect(courseOf(report, ids.classHistoryDraft).published).toBe(false);
 
     const html = await (await page("/student", studentZhangCookie)).text();
     expect(html).toContain("2025-2026 学年下学期");
     expect(html).toContain("高二 1 班 历史（上学期）");
+    expect(html).toContain("暂无成绩");
+    expect(html).not.toContain("听力");
     expect(html).not.toContain("平时");
     expect(html).not.toContain("实验");
 
@@ -937,7 +1047,7 @@ describe("学生成绩查询", () => {
     expect(updatedHtml).toMatch(/>50</);
   });
 
-  it("界面与接口都不出现排名、班级平均分或同班对比", async () => {
+  it("界面与接口都不出现平均分与排名，也没有同班对比", async () => {
     const html = await (await page("/student", studentZhangCookie)).text();
     for (const forbidden of [
       "排名",
