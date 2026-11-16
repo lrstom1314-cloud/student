@@ -304,7 +304,155 @@ describe("学年与学期", () => {
     const anonymous = await api("GET", "/api/terms");
     expect(anonymous.status).toBe(401);
   });
+
+  it("切换当前学期需要确认，确认后全局只有一个当前学期", async () => {
+    const first2025 = await termIdOf(2025, "first");
+    const first2026 = await termIdOf(2026, "first");
+
+    // 尚未设置当前学期时，未确认的请求也要说明将发生什么。
+    const firstAttempt = await setCurrentTerm(first2025, false);
+    expect(firstAttempt.status).toBe(409);
+    const firstBody = (await firstAttempt.json()) as {
+      error: string;
+      confirmationRequired: boolean;
+      currentTerm: unknown;
+      targetTerm: { id: string; label: string };
+    };
+    expect(firstBody.confirmationRequired).toBe(true);
+    expect(firstBody.currentTerm).toBeNull();
+    expect(firstBody.targetTerm.id).toBe(first2025);
+    expect(firstBody.error).toContain("2025-2026 学年上学期");
+    expect(firstBody.error).toContain("确认");
+
+    expect(await settingRow()).toEqual({ count: 0, currentTermId: null });
+    expect(await currentTermIdFromApi()).toBeNull();
+
+    const confirmed = await setCurrentTerm(first2025, true);
+    expect(confirmed.status).toBe(200);
+    const confirmedBody = (await confirmed.json()) as {
+      currentTerm: { id: string; label: string };
+    };
+    expect(confirmedBody.currentTerm).toMatchObject({
+      id: first2025,
+      label: "2025-2026 学年上学期",
+    });
+
+    // 设置表永远只有一行，当前学期就是刚选中的那个。
+    expect(await settingRow()).toEqual({
+      count: 1,
+      currentTermId: first2025,
+    });
+
+    // 切换到另一个学期时，确认提示必须同时点出旧学期与目标学期。
+    const blocked = await setCurrentTerm(first2026, false);
+    expect(blocked.status).toBe(409);
+    const blockedBody = (await blocked.json()) as {
+      error: string;
+      currentTerm: { id: string };
+      targetTerm: { id: string };
+    };
+    expect(blockedBody.currentTerm.id).toBe(first2025);
+    expect(blockedBody.targetTerm.id).toBe(first2026);
+    expect(blockedBody.error).toContain("2025-2026 学年上学期");
+    expect(blockedBody.error).toContain("2026-2027 学年上学期");
+
+    // 未确认时原当前学期不变。
+    expect(await currentTermIdFromApi()).toBe(first2025);
+
+    const switched = await setCurrentTerm(first2026, true);
+    expect(switched.status).toBe(200);
+    expect(await settingRow()).toEqual({
+      count: 1,
+      currentTermId: first2026,
+    });
+
+    const overview = await termsFromApi();
+    expect(overview.currentTerm?.id).toBe(first2026);
+    const marked = overview.academicYears.flatMap((year) =>
+      year.terms.filter((term) => term.isCurrent).map((term) => term.id),
+    );
+    expect(marked).toEqual([first2026]);
+
+    // 重复设置同一学期是幂等的，仍然只有一条设置记录。
+    const again = await setCurrentTerm(first2026, true);
+    expect(again.status).toBe(200);
+    expect(await settingRow()).toEqual({
+      count: 1,
+      currentTermId: first2026,
+    });
+  });
+
+  it("不存在的学期不能设为当前学期", async () => {
+    const missing = await setCurrentTerm(
+      "00000000-0000-4000-8000-000000000000",
+      true,
+    );
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { error: string }).error).toContain(
+      "学期",
+    );
+
+    const malformed = await setCurrentTerm("not-a-uuid", true);
+    expect(malformed.status).toBe(400);
+  });
 });
+
+type TermsOverviewJson = {
+  currentTerm: { id: string; label: string } | null;
+  academicYears: {
+    terms: { id: string; isCurrent: boolean }[];
+  }[];
+};
+
+async function setCurrentTerm(
+  termId: unknown,
+  confirmed: boolean,
+  cookie: string = adminCookie,
+): Promise<Response> {
+  return api(
+    "POST",
+    "/api/admin/current-term",
+    { termId, confirmed },
+    cookie,
+  );
+}
+
+async function termsFromApi(): Promise<TermsOverviewJson> {
+  const response = await api("GET", "/api/terms", undefined, adminCookie);
+  expect(response.status).toBe(200);
+  return (await response.json()) as TermsOverviewJson;
+}
+
+async function currentTermIdFromApi(): Promise<string | null> {
+  return (await termsFromApi()).currentTerm?.id ?? null;
+}
+
+async function settingRow(): Promise<{
+  count: number;
+  currentTermId: string | null;
+}> {
+  const rows = await queryRows<{ count: number; current_term_id: string | null }>(
+    app.schema!,
+    "select count(*)::int as count, max(current_term_id::text) as current_term_id from term_settings",
+  );
+  return {
+    count: rows[0]!.count,
+    currentTermId: rows[0]!.current_term_id,
+  };
+}
+
+async function termIdOf(startYear: number, half: string): Promise<string> {
+  const rows = await queryRows<{ id: string }>(
+    app.schema!,
+    `select t.id from terms t
+     join academic_years y on y.id = t.academic_year_id
+     where y.start_year = $1 and t.half = $2`,
+    [startYear, half],
+  );
+  const id = rows[0]?.id;
+  if (!id) throw new Error(`找不到学期：${startYear} ${half}`);
+  return id;
+}
 
 async function createTerm(
   academicYearId: unknown,

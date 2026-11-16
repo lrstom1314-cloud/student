@@ -163,7 +163,9 @@ export async function listTermsOverview(): Promise<TermsOverview> {
   return { currentTerm, academicYears: [...grouped.values()] };
 }
 
-async function findTerm(id: string): Promise<TermSummary | null> {
+export async function getTermById(
+  id: string,
+): Promise<TermSummary | null> {
   const sql = getDb();
   const rows = await sql<TermRow[]>`
     select t.id, t.half, t.academic_year_id, y.start_year,
@@ -190,7 +192,7 @@ export async function getCurrentTerm(): Promise<TermSummary | null> {
 export async function setCurrentTerm(
   termId: string,
 ): Promise<TermSummary | null> {
-  const term = await findTerm(termId);
+  const term = await getTermById(termId);
   if (!term) return null;
 
   const sql = getDb();
@@ -201,5 +203,5 @@ export async function setCurrentTerm(
       set current_term_id = excluded.current_term_id,
           updated_at = now()
   `;
-  return findTerm(termId);
+  return getTermById(termId);
 }
