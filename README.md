@@ -173,6 +173,26 @@ SKIP_BUILD=1 npm test
   属性与过期、强制改密、管理员重置、停用账号和三角色权限边界。
 - 数据库不可用时会明确报错并提示先启动 PostgreSQL，而不是静默跳过。
 
+### 验收剧本（Playwright）
+
+第一版验收剧本是一条真实浏览器的端到端用例，覆盖「管理员导入 2 个行政班共 20 名学生
+→ 建课程与教学班 → 排含单双周变化的课表 → 教师录入 3 个成绩项并发布
+→ 学生登录只看到自己的课表与总评 → 管理员在变更日志里看到本次发布」。
+它只跑 happy path，测试数据全部虚构（见 `tests/e2e/fixtures/students.csv`）。
+
+```sh
+npx playwright install chromium   # 首次运行
+DATABASE_URL='postgres://...' npm run test:e2e
+```
+
+- 用例自己启动 `next start`（随机端口）并创建独占 schema（`e2e_...`），跑完 `DROP SCHEMA`；
+  与 `npm test` 的 schema、端口互不干扰。
+- `npm test` 不会连带运行 e2e：Vitest 只收集 `tests/**/*.test.ts`。
+- 失败时 `test-results/` 保留整页截图、录像与 trace，`playwright-report/` 生成 HTML 报告；
+  `npx playwright show-trace <trace.zip>` 可回放失败步骤。
+- 迭代时可先 `npm run build`，再 `SKIP_BUILD=1 npm run test:e2e` 复用构建产物。
+- CI 使用 `.github/workflows/e2e.yml`：GitHub Actions 起 PostgreSQL 服务，执行同一条命令。
+
 运维脚本另有一条不依赖数据库与 Docker 的测试（Node 内置 test runner）：
 
 ```sh
