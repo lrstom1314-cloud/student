@@ -1138,6 +1138,112 @@ describe("成绩项与总评计算", () => {
       ]);
     });
 
+    it("教师成绩页是全部学生 × 全部成绩项的网格，并提示键盘连续输入与上下移动", async () => {
+      const response = await page(
+        `/teacher/teaching-classes/${ids.classMain}/grades`,
+        teacherACookie,
+      );
+      expect(response.status).toBe(200);
+      const html = await response.text();
+
+      expect(html).toContain("成绩录入");
+      expect(html).toContain("张三");
+      expect(html).toContain("李四");
+      expect(html).toContain("平时");
+      expect(html).toContain("期中");
+      expect(html).toContain("期末");
+      expect(html).toContain("总评");
+      expect(html).toContain("权重合计");
+      expect(html).toContain("成绩项配置完整");
+      expect(html).not.toContain("不等于 100%");
+
+      // 2 名学生 × 3 个成绩项 = 6 个可输入单元格。
+      const cells = html.match(/data-cell-row=/g) ?? [];
+      expect(cells).toHaveLength(6);
+      expect(html).toContain("data-grade-item-id=");
+      expect(html).toContain("data-student-id=");
+
+      // 键盘操作说明：Tab 横向、Enter/方向键纵向。
+      expect(html).toContain("Enter");
+      expect(html).toContain("↓");
+      expect(html).toContain("Tab");
+
+      // 已算出的总评直接显示在页面上。
+      expect(html).toContain("85");
+      expect(html).toContain("100");
+    });
+
+    it("权重不等于 100 与总评未完成时，页面上明确提示", async () => {
+      const rounding = await page(
+        `/teacher/teaching-classes/${ids.classRounding}/grades`,
+        teacherACookie,
+      );
+      expect(rounding.status).toBe(200);
+      const roundingHtml = await rounding.text();
+      expect(roundingHtml).toContain("不等于 100%");
+      expect(roundingHtml).toContain("40%");
+
+      const incomplete = await page(
+        `/teacher/teaching-classes/${ids.classValidation}/grades`,
+        teacherACookie,
+      );
+      expect(incomplete.status).toBe(200);
+      const incompleteHtml = await incomplete.text();
+      expect(incompleteHtml).toContain("未完成");
+      expect(incompleteHtml).toContain("缺");
+    });
+
+    it("教师只能打开自己教学班的成绩页，管理员可打开，学生与匿名被拒绝", async () => {
+      const foreign = await page(
+        `/teacher/teaching-classes/${ids.classMain}/grades`,
+        teacherBCookie,
+      );
+      expect(foreign.status).toBe(403);
+      expect(await foreign.text()).toContain("无权访问");
+
+      const byStudent = await page(
+        `/teacher/teaching-classes/${ids.classMain}/grades`,
+        studentCookie,
+      );
+      expect(byStudent.status).toBe(403);
+
+      const anonymous = await page(
+        `/teacher/teaching-classes/${ids.classMain}/grades`,
+      );
+      expect([303, 307, 308]).toContain(anonymous.status);
+      expect(anonymous.headers.get("location")).toBe(
+        `/login?next=${encodeURIComponent(
+          `/teacher/teaching-classes/${ids.classMain}/grades`,
+        )}`,
+      );
+
+      const adminPage = await page(
+        `/admin/teaching-classes/${ids.classMain}/grades`,
+        adminCookie,
+      );
+      expect(adminPage.status).toBe(200);
+      const adminHtml = await adminPage.text();
+      expect(adminHtml).toContain("成绩录入");
+      expect(adminHtml).toContain("张三");
+      expect(adminHtml).toContain("平时");
+
+      const byTeacherOnAdminPage = await page(
+        `/admin/teaching-classes/${ids.classMain}/grades`,
+        teacherACookie,
+      );
+      expect(byTeacherOnAdminPage.status).toBe(403);
+
+      // 教师教学班详情页提供录入成绩入口。
+      const detail = await page(
+        `/teacher/teaching-classes/${ids.classMain}`,
+        teacherACookie,
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.text()).toContain(
+        `/teacher/teaching-classes/${ids.classMain}/grades`,
+      );
+    });
+
     it("只有任教教师与教务管理员能读写成绩，学生返回 403", async () => {
       const foreign = await createGradeItem(
         ids.classMain,
