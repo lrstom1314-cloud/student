@@ -1,0 +1,30 @@
+# 依赖与构建产物
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 真实数据：成绩、名单、备份一律不入库
+*.csv
+!tests/**/fixtures/*.csv
+backups/
+*.sql
+*.dump
+*.xlsx
+
+# 测试与工具产物
+coverage/
+playwright-report/
+test-results/
+
+# 系统文件
+.DS_Store
+*.log
