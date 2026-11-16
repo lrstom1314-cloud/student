@@ -15,6 +15,13 @@
       "when": 1794848210886,
       "tag": "0001_accounts_and_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794848572244,
+      "tag": "0002_academic_years_and_terms",
+      "breakpoints": true
     }
   ]
 }
