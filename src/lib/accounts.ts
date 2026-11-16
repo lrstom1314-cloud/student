@@ -45,6 +45,18 @@ export async function listAccounts(): Promise<AccountSummary[]> {
   return rows.map(toSummary);
 }
 
+/** 可任教的教师账号，供组建教学班时选择。 */
+export async function listTeacherAccounts(): Promise<AccountSummary[]> {
+  const sql = getDb();
+  const rows = await sql<AccountRow[]>`
+    select id, login_name, display_name, role, must_change_password, disabled
+    from accounts
+    where role = 'teacher' and disabled = false
+    order by login_name
+  `;
+  return rows.map(toSummary);
+}
+
 export async function findAccountByLoginName(
   loginName: string,
 ): Promise<(AccountSummary & { passwordHash: string }) | null> {
