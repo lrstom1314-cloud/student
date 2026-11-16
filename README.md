@@ -17,7 +17,7 @@
 cp .env.example .env
 ```
 
-至少填写 `POSTGRES_PASSWORD`（请使用足够长的随机值）。`DATABASE_URL` 用于在本机直接运行应用或测试，密码需与 `POSTGRES_PASSWORD` 一致。
+至少填写 `POSTGRES_PASSWORD`（请使用足够长的随机值：`openssl rand -base64 32 | tr -d '\n'`）。`DATABASE_URL` 用于在本机直接运行应用或测试，密码需与 `POSTGRES_PASSWORD` 一致。部署、备份与恢复的完整说明见 [`docs/operations.md`](./docs/operations.md)。
 
 | 变量 | 用途 |
 | --- | --- |
@@ -25,6 +25,10 @@ cp .env.example .env
 | `POSTGRES_PORT` / `APP_PORT` | 映射到宿主机的端口 |
 | `DATABASE_URL` | 应用与测试使用的 PostgreSQL 连接串 |
 | `DATABASE_SCHEMA` | 可选。把连接固定到某个 schema；生产留空（`public`），测试脚手架会自动注入 |
+| `BACKUP_RETENTION_DAYS` / `BACKUP_SCHEDULE` | 每日备份的保留天数与 cron 计划（容器时区为 UTC） |
+| `BACKUP_OFFSITE_HOST_DIR` | 异地/对象存储挂载点；生产必须指向真实异地路径，默认值只是同盘占位 |
+
+会话不依赖签名密钥：登录令牌是随机值，数据库只存其 SHA-256 哈希，因此没有 `SESSION_SECRET` 之类的变量。
 
 ## 账号与会话
 
@@ -92,10 +96,21 @@ docker compose exec app node scripts/create-account.mjs \
 ## 用 Docker Compose 启动
 
 ```sh
-docker compose up --build
+cp .env.example .env
+# 把 .env 中的 POSTGRES_PASSWORD 换成随机值，例如：
+#   openssl rand -base64 32 | tr -d '\n'
+docker compose up -d --build
 ```
 
 应用容器启动时会先执行数据库迁移（幂等），再启动 Next.js。数据库数据保存在命名卷 `student-db-data` 中。
+
+若数据库不可达，启动会在迁移前置检查处**立即失败并打印中文原因**，不会无限重试：
+容器退出码为 1，应用不会半启动。修正 `DATABASE_URL` / `POSTGRES_PASSWORD` 或等数据库就绪后重启即可。
+
+`backup` 服务在启动时立即备份一次，之后每天按 `BACKUP_SCHEDULE` 用 `pg_dump` 备份，
+默认保留 30 天，并复制到 `BACKUP_OFFSITE_HOST_DIR`。备份文件在 `./backups/`，
+失败会写进容器日志并让 `docker compose ps` 中的 backup 显示 unhealthy。
+恢复步骤与验证点见 [`docs/operations.md`](./docs/operations.md)。
 
 启动后访问：
 
@@ -158,6 +173,16 @@ SKIP_BUILD=1 npm test
   属性与过期、强制改密、管理员重置、停用账号和三角色权限边界。
 - 数据库不可用时会明确报错并提示先启动 PostgreSQL，而不是静默跳过。
 
+运维脚本另有一条不依赖数据库与 Docker 的测试（Node 内置 test runner）：
+
+```sh
+npm run test:ops
+```
+
+覆盖备份的命名与 `pg_dump` 调用、失败时非零退出且不留半成品、异地副本、30 天保留
+（含 `--dry-run`）、健康检查对 failed/过期/缺失状态的判定，以及启动期数据库不可达的快速失败。
+`npm test` 会先跑 HTTP 测试，再跑这组运维测试。
+
 ## 生产构建
 
 ```sh
@@ -177,7 +202,13 @@ src/app/change-password/ 修改密码（含首次强制改密）
 src/db/             PostgreSQL 连接与 Drizzle 表定义
 src/lib/            认证、会话、密码与账号逻辑
 drizzle/            版本化迁移与 journal
-scripts/migrate.mjs 迁移执行器（应用与容器共用）
+scripts/migrate.mjs 迁移执行器（应用与容器共用，启动时先检查数据库连通性）
 scripts/create-account.mjs 首个管理员开通脚本
+scripts/backup.sh   单次备份：pg_dump → 按日期命名 → 异地副本 → 清理
+scripts/backup-prune.sh 保留策略：删除超过保留天数的备份
+scripts/backup-entrypoint.sh 备份容器入口：首次备份 + 安装 cron
+scripts/backup-healthcheck.sh 备份健康检查（容器 healthcheck）
+docs/operations.md  部署、环境变量、备份与恢复手册
 tests/              HTTP 测试与测试脚手架
+tests/ops/          备份脚本与启动失败的测试（Node 内置 test runner）
 ```
