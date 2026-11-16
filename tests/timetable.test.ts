@@ -546,4 +546,506 @@ describe("课表录入与冲突告警", () => {
       expect(body.conflicts[0]!.reasons).toContain("teacher");
     });
   });
+
+  describe("冲突边界", () => {
+    it("周次区间只相接不算冲突，真正相交才算；跨学期同一时段不冲突", async () => {
+      const first = await createEntryOk(
+        ids.tcA1,
+        entryBody({
+          weekday: 5,
+          startWeek: 1,
+          endWeek: 8,
+          weekParity: "odd",
+          classroom: "教学楼 F606",
+        }),
+      );
+      expect(first.conflicts).toEqual([]);
+
+      const second = await createEntryOk(
+        ids.tcA2,
+        entryBody({
+          weekday: 5,
+          startWeek: 9,
+          endWeek: 16,
+          weekParity: "odd",
+          classroom: "教学楼 F606",
+        }),
+      );
+      // 第 8 周与第 9 周不相交；同教师、同教室也不构成重叠。
+      expect(second.conflicts).toEqual([]);
+
+      const overlapping = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, second.entry.id),
+        entryBody({
+          weekday: 5,
+          startWeek: 8,
+          endWeek: 16,
+          weekParity: "odd",
+          classroom: "教学楼 F606",
+        }),
+        teacherACookie,
+      );
+      expect(overlapping.status).toBe(200);
+      const body = (await overlapping.json()) as {
+        entry: EntryJson;
+        conflicts: ConflictJson[];
+      };
+      expect(body.conflicts).toHaveLength(1);
+      expect(body.conflicts[0]!.conflictingEntryId).toBe(first.entry.id);
+      expect(body.conflicts[0]!.reasons).toEqual(["teacher", "classroom"]);
+
+      // 换一个学期后，同一教师、同一教室、同一时间也不算冲突。
+      const otherTerm = await createEntryOk(
+        ids.tcAOtherTerm,
+        entryBody({ classroom: "教学楼 A101" }),
+      );
+      expect(otherTerm.conflicts).toEqual([]);
+    });
+
+    it("同一教学班内部的条目不做冲突判定", async () => {
+      const first = await createEntryOk(
+        ids.tcA1,
+        entryBody({
+          weekday: 6,
+          startPeriod: 1,
+          endPeriod: 2,
+          classroom: "教学楼 G707",
+        }),
+      );
+      const second = await createEntryOk(
+        ids.tcA1,
+        entryBody({
+          weekday: 6,
+          startPeriod: 1,
+          endPeriod: 2,
+          classroom: "教学楼 G707",
+        }),
+      );
+      expect(first.conflicts).toEqual([]);
+      expect(second.conflicts).toEqual([]);
+
+      const list = await listTimetable(ids.tcA1);
+      expect(
+        list.entries
+          .filter((item) => item.weekday === 6)
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual([first.entry.id, second.entry.id].sort());
+    });
+  });
+
+  describe("确认冲突与增删改", () => {
+    it("保存时显式确认冲突会留下「已确认冲突」的痕迹，之后修改需要重新确认", async () => {
+      const base = entryBody({
+        weekday: 7,
+        startPeriod: 1,
+        endPeriod: 2,
+        classroom: "教学楼 H808",
+      });
+
+      await createEntryOk(ids.tcA1, base);
+
+      const unconfirmed = await createEntryOk(ids.tcA2, base);
+      expect(unconfirmed.conflicts).toHaveLength(1);
+      expect(unconfirmed.entry.acknowledgedAt).toBeNull();
+
+      // 同教室、不同教师：与两个班都冲突；创建时就确认。
+      const confirmed = await createEntryOk(
+        ids.tcB1,
+        { ...base, acknowledgeConflicts: true },
+        teacherBCookie,
+      );
+      expect(confirmed.conflicts).toHaveLength(2);
+      expect(typeof confirmed.entry.acknowledgedAt).toBe("string");
+      expect(
+        Number.isNaN(Date.parse(confirmed.entry.acknowledgedAt!)),
+      ).toBe(false);
+
+      const saved = await listTimetable(ids.tcB1, teacherBCookie);
+      expect(
+        saved.entries.find((item) => item.id === confirmed.entry.id)
+          ?.acknowledgedAt,
+      ).toBe(confirmed.entry.acknowledgedAt);
+
+      // 未确认的条目仍保留警告；修改并确认后痕迹出现。
+      const pending = await listTimetable(ids.tcA2);
+      const pendingEntry = pending.entries.find(
+        (item) => item.id === unconfirmed.entry.id,
+      )!;
+      expect(pendingEntry.acknowledgedAt).toBeNull();
+      expect(
+        pending.conflicts.filter(
+          (item) => item.entryId === unconfirmed.entry.id,
+        ),
+      ).toHaveLength(2);
+
+      const acknowledged = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, unconfirmed.entry.id),
+        { ...base, acknowledgeConflicts: true },
+        teacherACookie,
+      );
+      expect(acknowledged.status).toBe(200);
+      const acknowledgedBody = (await acknowledged.json()) as {
+        entry: EntryJson;
+        conflicts: ConflictJson[];
+      };
+      expect(acknowledgedBody.conflicts).toHaveLength(2);
+      expect(acknowledgedBody.entry.acknowledgedAt).not.toBeNull();
+
+      // 再次修改但未确认时，确认痕迹被清空，提醒需要重新确认。
+      const reset = await api(
+        "PATCH",
+        entryRoute(ids.tcB1, confirmed.entry.id),
+        base,
+        teacherBCookie,
+      );
+      expect(reset.status).toBe(200);
+      expect(((await reset.json()) as { entry: EntryJson }).entry.acknowledgedAt).toBeNull();
+    });
+
+    it("删除条目后相关警告随之消失", async () => {
+      const anchor = await createEntryOk(
+        ids.tcB1,
+        entryBody({
+          weekday: 6,
+          startPeriod: 3,
+          endPeriod: 4,
+          classroom: "教学楼 K909",
+        }),
+        teacherBCookie,
+      );
+      const extra = await createEntryOk(
+        ids.tcA2,
+        entryBody({
+          weekday: 6,
+          startPeriod: 3,
+          endPeriod: 4,
+          classroom: "教学楼 K909",
+        }),
+      );
+      expect(extra.conflicts).toHaveLength(1);
+      expect(extra.conflicts[0]!.conflictingEntryId).toBe(anchor.entry.id);
+
+      const before = await listTimetable(ids.tcB1, teacherBCookie);
+      expect(
+        before.conflicts.some(
+          (item) => item.conflictingEntryId === extra.entry.id,
+        ),
+      ).toBe(true);
+
+      const removed = await api(
+        "DELETE",
+        entryRoute(ids.tcA2, extra.entry.id),
+        undefined,
+        teacherACookie,
+      );
+      expect(removed.status).toBe(204);
+
+      const after = await listTimetable(ids.tcB1, teacherBCookie);
+      expect(
+        after.conflicts.some(
+          (item) => item.conflictingEntryId === extra.entry.id,
+        ),
+      ).toBe(false);
+      expect(after.entries.map((item) => item.id)).toContain(anchor.entry.id);
+
+      const afterA = await listTimetable(ids.tcA2);
+      expect(
+        afterA.entries.some((item) => item.id === extra.entry.id),
+      ).toBe(false);
+
+      const again = await api(
+        "DELETE",
+        entryRoute(ids.tcA2, extra.entry.id),
+        undefined,
+        teacherACookie,
+      );
+      expect(again.status).toBe(404);
+      expect(await errorOf(again)).toContain("课表条目");
+    });
+
+    it("修改条目后旧警告消失，新时间若冲突会出现新警告", async () => {
+      const thursday = await listTimetable(ids.tcA2);
+      const entry = thursday.entries.find((item) => item.weekday === 4)!;
+
+      const moved = await api(
+        "PATCH",
+        entryRoute(ids.tcA2, entry.id),
+        entryBody({
+          weekday: 4,
+          startPeriod: 3,
+          endPeriod: 4,
+          classroom: "教学楼 E505",
+        }),
+        teacherACookie,
+      );
+      expect(moved.status).toBe(200);
+      const movedBody = (await moved.json()) as {
+        entry: EntryJson;
+        conflicts: ConflictJson[];
+      };
+      expect(movedBody.entry).toMatchObject({
+        startPeriod: 3,
+        endPeriod: 4,
+        classroom: "教学楼 E505",
+      });
+      expect(movedBody.conflicts).toEqual([]);
+
+      const list = await listTimetable(ids.tcA2);
+      expect(
+        list.conflicts.filter((item) => item.entryId === entry.id),
+      ).toEqual([]);
+    });
+  });
+
+  describe("权限与校验", () => {
+    it("教师只能写自己任教的教学班，学生与未登录用户被拒绝", async () => {
+      const entry = (await listTimetable(ids.tcA1)).entries[0]!;
+
+      const foreignCreate = await createEntry(
+        ids.tcA1,
+        entryBody({ weekday: 2, startPeriod: 9, endPeriod: 10 }),
+        teacherBCookie,
+      );
+      expect(foreignCreate.status).toBe(403);
+      expect(await errorOf(foreignCreate)).toBe("无权访问。");
+
+      const ownOther = await createEntry(
+        ids.tcB1,
+        entryBody({ weekday: 2, startPeriod: 9, endPeriod: 10 }),
+        teacherACookie,
+      );
+      expect(ownOther.status).toBe(403);
+
+      for (const request of [
+        api(
+          "PATCH",
+          entryRoute(ids.tcA1, entry.id),
+          entryBody({ weekday: 2, startPeriod: 9, endPeriod: 10 }),
+          teacherBCookie,
+        ),
+        api(
+          "DELETE",
+          entryRoute(ids.tcA1, entry.id),
+          undefined,
+          teacherBCookie,
+        ),
+        api(
+          "GET",
+          timetableRoute(ids.tcA1),
+          undefined,
+          teacherBCookie,
+        ),
+      ]) {
+        const response = await request;
+        expect(response.status).toBe(403);
+        expect(await errorOf(response)).toBe("无权访问。");
+      }
+
+      const byStudent = await createEntry(
+        ids.tcA1,
+        entryBody({ weekday: 2, startPeriod: 9, endPeriod: 10 }),
+        studentCookie,
+      );
+      expect(byStudent.status).toBe(403);
+
+      const anonymous = await createEntry(
+        ids.tcA1,
+        entryBody({ weekday: 2, startPeriod: 9, endPeriod: 10 }),
+        "",
+      );
+      expect(anonymous.status).toBe(401);
+      expect(await errorOf(anonymous)).toBe("请先登录。");
+
+      // 教务管理员可写全部，也仍然会在冲突时收到警告。
+      const byAdmin = await createEntry(
+        ids.tcA1,
+        entryBody({
+          weekday: 2,
+          startPeriod: 9,
+          endPeriod: 10,
+          classroom: "教学楼 A101",
+        }),
+        adminCookie,
+      );
+      expect(byAdmin.status).toBe(201);
+      const adminEntry = ((await byAdmin.json()) as { entry: EntryJson }).entry;
+
+      const adminUpdate = await api(
+        "PATCH",
+        entryRoute(ids.tcA1, adminEntry.id),
+        entryBody({
+          weekday: 2,
+          startPeriod: 9,
+          endPeriod: 10,
+          classroom: "教学楼 A101",
+        }),
+        adminCookie,
+      );
+      expect(adminUpdate.status).toBe(200);
+
+      const adminDelete = await api(
+        "DELETE",
+        entryRoute(ids.tcA1, adminEntry.id),
+        undefined,
+        adminCookie,
+      );
+      expect(adminDelete.status).toBe(204);
+    });
+
+    it("不存在的教学班与条目返回可读的 404", async () => {
+      const missingClass = "00000000-0000-4000-8000-000000000000";
+
+      const asTeacher = await api(
+        "GET",
+        timetableRoute(missingClass),
+        undefined,
+        teacherACookie,
+      );
+      expect(asTeacher.status).toBe(404);
+      expect(await errorOf(asTeacher)).toContain("教学班");
+
+      const asAdmin = await createEntry(
+        missingClass,
+        entryBody(),
+        adminCookie,
+      );
+      expect(asAdmin.status).toBe(404);
+
+      const malformed = await api(
+        "GET",
+        "/api/teaching-classes/not-a-uuid/timetable",
+        undefined,
+        adminCookie,
+      );
+      expect(malformed.status).toBe(404);
+
+      const entry = (await listTimetable(ids.tcA2)).entries[0]!;
+      const crossClassPatch = await api(
+        "PATCH",
+        entryRoute(ids.tcA1, entry.id),
+        entryBody(),
+        adminCookie,
+      );
+      expect(crossClassPatch.status).toBe(404);
+
+      const crossClassDelete = await api(
+        "DELETE",
+        entryRoute(ids.tcA1, entry.id),
+        undefined,
+        adminCookie,
+      );
+      expect(crossClassDelete.status).toBe(404);
+
+      const unknownEntry = await api(
+        "DELETE",
+        entryRoute(ids.tcA1, missingClass),
+        undefined,
+        adminCookie,
+      );
+      expect(unknownEntry.status).toBe(404);
+    });
+
+    it("结束节次早于起始、结束周早于起始等非法区间被拒绝并提示", async () => {
+      const before = (
+        await queryRows<{ count: number }>(
+          app.schema!,
+          "select count(*)::int as count from timetable_entries",
+        )
+      )[0]!.count;
+
+      const cases: Array<{ body: Json; word: string }> = [
+        {
+          body: entryBody({ startPeriod: 5, endPeriod: 4 }),
+          word: "结束节次",
+        },
+        {
+          body: entryBody({ startWeek: 9, endWeek: 8 }),
+          word: "结束周",
+        },
+        { body: entryBody({ weekday: 0 }), word: "星期" },
+        { body: entryBody({ weekday: 8 }), word: "星期" },
+        { body: entryBody({ weekday: "周一" }), word: "星期" },
+        { body: entryBody({ startPeriod: 1.5 }), word: "节次" },
+        { body: entryBody({ startPeriod: 0 }), word: "节次" },
+        { body: entryBody({ endPeriod: 21 }), word: "节次" },
+        { body: entryBody({ startWeek: 0 }), word: "周次" },
+        { body: entryBody({ endWeek: 31 }), word: "周次" },
+        { body: entryBody({ weekParity: "biweekly" }), word: "单双周" },
+        { body: entryBody({ weekParity: undefined }), word: "单双周" },
+        { body: entryBody({ classroom: "   " }), word: "教室名" },
+        { body: entryBody({ classroom: "教".repeat(65) }), word: "教室名" },
+        {
+          body: {
+            startPeriod: 1,
+            endPeriod: 2,
+            startWeek: 1,
+            endWeek: 16,
+            weekParity: "every",
+            classroom: "教学楼 A101",
+          },
+          word: "星期",
+        },
+        {
+          body: {
+            weekday: 1,
+            startWeek: 1,
+            endWeek: 16,
+            weekParity: "every",
+            classroom: "教学楼 A101",
+          },
+          word: "节次",
+        },
+        {
+          body: {
+            weekday: 1,
+            startPeriod: 1,
+            endPeriod: 2,
+            weekParity: "every",
+            classroom: "教学楼 A101",
+          },
+          word: "起始周",
+        },
+      ];
+
+      for (const item of cases) {
+        const response = await createEntry(ids.tcA1, item.body);
+        expect(response.status).toBe(400);
+        expect(await errorOf(response)).toContain(item.word);
+      }
+
+      const after = (
+        await queryRows<{ count: number }>(
+          app.schema!,
+          "select count(*)::int as count from timetable_entries",
+        )
+      )[0]!.count;
+      expect(after).toBe(before);
+
+      // 修改时同样拒绝非法区间，且原条目保持不变。
+      const entry = (await listTimetable(ids.tcA1)).entries.find(
+        (item) => item.weekday === 4,
+      )!;
+      const invalidPatch = await api(
+        "PATCH",
+        entryRoute(ids.tcA1, entry.id),
+        entryBody({
+          weekday: 4,
+          startPeriod: 3,
+          endPeriod: 1,
+          classroom: "教学楼 E505",
+        }),
+        teacherACookie,
+      );
+      expect(invalidPatch.status).toBe(400);
+      expect(await errorOf(invalidPatch)).toContain("结束节次");
+
+      const unchanged = await listTimetable(ids.tcA1);
+      expect(unchanged.entries.find((item) => item.id === entry.id)).toEqual(
+        entry,
+      );
+    });
+  });
 });
