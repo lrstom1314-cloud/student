@@ -15,11 +15,14 @@ export default async function TeacherPage() {
           <p>
             当前账号：{user.displayName}（{user.loginName}）
           </p>
+          <p>
+            <a href="/teacher/teaching-classes">我的教学班</a>
+          </p>
         </div>
         <LogoutButton />
       </header>
       <CurrentTermScope />
-      <p>教学班、课表与成绩将在后续功能中加入。</p>
+      <p>课表与成绩将在后续功能中加入。</p>
     </main>
   );
 }
