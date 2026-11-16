@@ -19,11 +19,14 @@ backups/
 *.sql
 *.dump
 *.xlsx
+# 数据库迁移脚本属于源码，需入库
+!drizzle/**/*.sql
 
 # 测试与工具产物
 coverage/
 playwright-report/
 test-results/
+*.tsbuildinfo
 
 # 系统文件
 .DS_Store
