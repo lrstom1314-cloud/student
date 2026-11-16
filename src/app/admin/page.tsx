@@ -31,7 +31,10 @@ export default async function AdminPage() {
             <Link href="/admin/terms">学年与学期</Link>
           </p>
         </div>
-        <LogoutButton />
+        <div className="header-actions">
+          <a href="/admin/students">学籍管理</a>
+          <LogoutButton />
+        </div>
       </header>
 
       <section>

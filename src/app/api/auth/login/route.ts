@@ -15,6 +15,7 @@ import {
   readJsonObject,
 } from "@/lib/http";
 import { DUMMY_PASSWORD_HASH, verifyPassword } from "@/lib/password";
+import { findEnrollmentStatusByAccountId } from "@/lib/students";
 
 /**
  * 空密码、错误密码、不存在的账号、已停用账号共用这一条提示。
@@ -41,6 +42,17 @@ export async function POST(request: Request) {
 
     if (!account || account.disabled || !passwordOk) {
       return errorResponse(LOGIN_FAILED, 401);
+    }
+
+    // 学籍状态非「在读」一律拒绝，且与密码错误共用同一条提示，
+    // 避免无关人员据此推断学生休学、转出或毕业。
+    if (account.role === "student") {
+      const enrollmentStatus = await findEnrollmentStatusByAccountId(
+        account.id,
+      );
+      if (enrollmentStatus !== null && enrollmentStatus !== "enrolled") {
+        return errorResponse(LOGIN_FAILED, 401);
+      }
     }
 
     // 登录即轮换：丢弃浏览器带来的旧会话，签发全新的服务端会话。
