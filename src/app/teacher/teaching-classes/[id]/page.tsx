@@ -40,6 +40,10 @@ export default async function TeacherTeachingClassPage({
           <h1>{teachingClass.displayName}</h1>
           <p>
             <Link href="/teacher/teaching-classes">返回我的教学班</Link>
+            {" · "}
+            <Link href={`/teacher/teaching-classes/${id}/grades`}>
+              录入成绩
+            </Link>
           </p>
         </div>
         <LogoutButton />

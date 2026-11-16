@@ -207,6 +207,21 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.grade-grid input {
+  width: 5.5rem;
+}
+
+.overall-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.overall-controls input {
+  width: 5rem;
+}
+
 @media (max-width: 720px) {
   .page {
     padding: 2rem 1rem;

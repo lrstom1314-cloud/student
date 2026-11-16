@@ -335,3 +335,163 @@ export const timetableEntries = pgTable(
     ),
   ],
 );
+
+/**
+ * 成绩项：教学班内针对全体学生的一次计分，带满分与权重（百分比）。
+ * 同一教学班内名称唯一；权重合计不强制为 100，由界面提示。
+ */
+export const gradeItems = pgTable(
+  "grade_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    maxScore: numeric("max_score", { precision: 6, scale: 2 }).notNull(),
+    weight: numeric("weight", { precision: 5, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grade_items_teaching_class_id_name_unique").on(
+      table.teachingClassId,
+      table.name,
+    ),
+    index("grade_items_teaching_class_id_idx").on(table.teachingClassId),
+    check("grade_items_max_score_positive", sql`${table.maxScore} > 0`),
+    check(
+      "grade_items_weight_range",
+      sql`${table.weight} > 0 and ${table.weight} <= 100`,
+    ),
+  ],
+);
+
+/**
+ * 成绩：成绩项 × 学生 × 得分。得分留空表示缺考/未录入，
+ * 因此空白不写行，而不是写入 0 分。
+ */
+export const studentGrades = pgTable(
+  "student_grades",
+  {
+    gradeItemId: uuid("grade_item_id")
+      .notNull()
+      .references(() => gradeItems.id, { onDelete: "cascade" }),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    score: numeric("score", { precision: 6, scale: 2 }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.gradeItemId, table.studentId] }),
+    index("student_grades_student_id_idx").on(table.studentId),
+    check("student_grades_score_non_negative", sql`${table.score} >= 0`),
+  ],
+);
+
+/**
+ * 总评：教学班 × 学生。系统计算值与教师覆盖值分开存放；
+ * 有覆盖值时以覆盖值为准，取消覆盖后自然回落到计算值。
+ */
+export const gradeOveralls = pgTable(
+  "grade_overalls",
+  {
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    computedScore: numeric("computed_score", { precision: 8, scale: 2 }),
+    computedAt: timestamp("computed_at", { withTimezone: true }),
+    overrideScore: numeric("override_score", { precision: 8, scale: 2 }),
+    overrideUpdatedAt: timestamp("override_updated_at", {
+      withTimezone: true,
+    }),
+    overrideUpdatedBy: uuid("override_updated_by").references(
+      () => accounts.id,
+      { onDelete: "restrict" },
+    ),
+  },
+  (table) => [
+    primaryKey({ columns: [table.teachingClassId, table.studentId] }),
+    index("grade_overalls_student_id_idx").on(table.studentId),
+    check(
+      "grade_overalls_scores_non_negative",
+      sql`(${table.computedScore} is null or ${table.computedScore} >= 0)
+        and (${table.overrideScore} is null or ${table.overrideScore} >= 0)`,
+    ),
+  ],
+);
+
+/**
+ * 成绩变更日志：谁、何时、对哪个教学班的哪个学生做了什么。
+ * 目标既可以是某个成绩项的得分，也可以是总评覆盖。
+ */
+export const gradeChangeTarget = pgEnum("grade_change_target", [
+  "grade_item",
+  "overall",
+]);
+
+export type GradeChangeTarget = (typeof gradeChangeTarget.enumValues)[number];
+
+/**
+ * record / update 覆盖成绩项录入与修改；override_overall / cancel_override
+ * 覆盖总评的人工覆盖与取消；publish / unlock 为发布与解锁预留（工单 #11）。
+ */
+export const gradeChangeAction = pgEnum("grade_change_action", [
+  "record",
+  "update",
+  "override_overall",
+  "cancel_override",
+  "publish",
+  "unlock",
+]);
+
+export type GradeChangeAction = (typeof gradeChangeAction.enumValues)[number];
+
+export const gradeChangeLogs = pgTable(
+  "grade_change_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "restrict" }),
+    gradeItemId: uuid("grade_item_id").references(() => gradeItems.id, {
+      onDelete: "set null",
+    }),
+    target: gradeChangeTarget("target").notNull(),
+    action: gradeChangeAction("action").notNull(),
+    actorAccountId: uuid("actor_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    oldValue: numeric("old_value", { precision: 8, scale: 2 }),
+    newValue: numeric("new_value", { precision: 8, scale: 2 }),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("grade_change_logs_teaching_class_id_idx").on(
+      table.teachingClassId,
+      table.createdAt,
+    ),
+    index("grade_change_logs_student_id_idx").on(table.studentId),
+    index("grade_change_logs_actor_account_id_idx").on(table.actorAccountId),
+    check(
+      "grade_change_logs_target_item",
+      sql`${table.target} = 'grade_item' or ${table.gradeItemId} is null`,
+    ),
+  ],
+);
