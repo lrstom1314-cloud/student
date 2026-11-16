@@ -32,6 +32,7 @@ export function GradeLogTable({ entries }: { entries: GradeChangeLogEntry[] }) {
           <th>时间</th>
           <th>操作人</th>
           <th>学生</th>
+          <th>教学班</th>
           <th>目标</th>
           <th>旧值</th>
           <th>新值</th>
@@ -53,6 +54,7 @@ export function GradeLogTable({ entries }: { entries: GradeChangeLogEntry[] }) {
                 ? `${entry.student.studentNumber} ${entry.student.name}`
                 : "—"}
             </td>
+            <td>{entry.teachingClass.displayName}</td>
             <td>{targetLabel(entry)}</td>
             <td>{valueLabel(entry.oldValue)}</td>
             <td>{valueLabel(entry.newValue)}</td>

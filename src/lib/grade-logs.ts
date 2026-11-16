@@ -115,7 +115,11 @@ export async function listGradeChangeLogsByTeachingClass(
   return rows.map(toEntry);
 }
 
-/** 某学生的全部变更日志，跨教学班；教务管理员按学生追溯时使用。 */
+/**
+ * 某学生的全部变更日志，跨教学班；教务管理员按学生追溯时使用。
+ * 发布与解锁是教学班级动作（没有目标学生），只要该学生当前在这个教学班名单里，
+ * 这些事件也应当出现在他的追溯记录中。
+ */
 export async function listGradeChangeLogsByStudent(
   studentId: string,
 ): Promise<GradeChangeLogEntry[]> {
@@ -123,6 +127,14 @@ export async function listGradeChangeLogsByStudent(
   const rows = await sql.unsafe<LogRow[]>(
     `${LOG_SELECT}
      where gcl.student_id = $1
+        or (
+          gcl.student_id is null
+          and exists (
+            select 1 from teaching_class_students roster
+            where roster.teaching_class_id = gcl.teaching_class_id
+              and roster.student_id = $1
+          )
+        )
      ${LOG_ORDER}`,
     [studentId],
   );
