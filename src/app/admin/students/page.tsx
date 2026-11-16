@@ -5,6 +5,7 @@ import { ENROLLMENT_STATUS_LABELS } from "@/lib/enrollment-status";
 import { isUuid } from "@/lib/http";
 import { listStudents } from "@/lib/students";
 
+import { StudentImportForm } from "./import-form";
 import {
   CreateAdministrativeClassForm,
   CreateStudentForm,
@@ -92,6 +93,14 @@ export default async function StudentsPage({
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section>
+        <h2>批量导入学生</h2>
+        <p className="hint">
+          CSV 表头至少包含：学号、姓名、行政班、学籍状态（行政班名称也可）。学号已存在时更新姓名、行政班与学籍状态，不会改动密码；新学生的初始密码由系统随机生成，只在导入结果中显示一次。行政班必须事先创建，导入不会自动新建行政班。
+        </p>
+        <StudentImportForm />
       </section>
 
       <section>

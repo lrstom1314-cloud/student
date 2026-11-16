@@ -1,3 +1,5 @@
+import { randomInt } from "node:crypto";
+
 import type { Options } from "@node-rs/argon2";
 import { hash, verify } from "@node-rs/argon2";
 
@@ -40,6 +42,41 @@ export async function verifyPassword(
   } catch {
     return false;
   }
+}
+
+/** 批量导入时由系统生成的初始密码长度。 */
+export const GENERATED_PASSWORD_LENGTH = 12;
+
+const UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const LOWERCASE = "abcdefghijkmnopqrstuvwxyz";
+const DIGITS = "23456789";
+
+function randomCharacter(alphabet: string): string {
+  return alphabet[randomInt(alphabet.length)]!;
+}
+
+/**
+ * 生成一次性初始密码：12 位，保证同时含大写、小写与数字。
+ * 使用 node:crypto 的 randomInt，不依赖 Math.random 的可预测序列。
+ */
+export function generateInitialPassword(): string {
+  const alphabet = UPPERCASE + LOWERCASE + DIGITS;
+  const characters = [
+    randomCharacter(UPPERCASE),
+    randomCharacter(LOWERCASE),
+    randomCharacter(DIGITS),
+  ];
+
+  while (characters.length < GENERATED_PASSWORD_LENGTH) {
+    characters.push(randomCharacter(alphabet));
+  }
+
+  for (let i = characters.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    [characters[i], characters[j]] = [characters[j]!, characters[i]!];
+  }
+
+  return characters.join("");
 }
 
 export function passwordProblem(password: unknown): string | null {
