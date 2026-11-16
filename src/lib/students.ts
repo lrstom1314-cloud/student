@@ -1,6 +1,8 @@
 import { getDb } from "@/db";
-import type { EnrollmentStatus } from "@/db/schema";
-import { enrollmentStatus } from "@/db/schema";
+import {
+  ENROLLMENT_STATUSES,
+  type EnrollmentStatus,
+} from "@/lib/enrollment-status";
 
 /** 对外暴露的学生学籍信息。永远不包含密码哈希。 */
 export type StudentSummary = {
@@ -19,9 +21,6 @@ type StudentRow = {
   administrative_class_id: string;
   administrative_class_name: string;
 };
-
-export const ENROLLMENT_STATUSES: readonly EnrollmentStatus[] =
-  enrollmentStatus.enumValues;
 
 export function isEnrollmentStatus(value: unknown): value is EnrollmentStatus {
   return (

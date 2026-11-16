@@ -9,6 +9,11 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import {
+  ENROLLMENT_STATUSES,
+  type EnrollmentStatus,
+} from "../lib/enrollment-status";
+
 /**
  * 账号角色。术语见 GLOSSARY.md：学生 / 教师 / 教务管理员。
  * 代码里使用稳定的英文枚举值，界面统一显示中文。
@@ -68,14 +73,12 @@ export const sessions = pgTable(
  * 学籍状态：在读 / 休学 / 转出 / 毕业。
  * 只有「在读」的学生可以登录；状态不存在其他含义。
  */
-export const enrollmentStatus = pgEnum("enrollment_status", [
-  "enrolled",
-  "suspended",
-  "transferred",
-  "graduated",
-]);
+export const enrollmentStatus = pgEnum(
+  "enrollment_status",
+  ENROLLMENT_STATUSES,
+);
 
-export type EnrollmentStatus = (typeof enrollmentStatus.enumValues)[number];
+export type { EnrollmentStatus };
 
 /**
  * 行政班：名称本身含年级（如「高二 3 班」），不设年级实体。

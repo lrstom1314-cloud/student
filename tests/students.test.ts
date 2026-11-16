@@ -800,4 +800,162 @@ describe("行政班与学生", () => {
       expect(attempt.body.redirectTo).toBe("/student");
     });
   });
+
+  describe("权限边界", () => {
+    it("教师与学生访问学籍相关接口一律返回 403，且数据不被改动", async () => {
+      const teacherCookie = await activateAccount({
+        loginName: "t9301",
+        displayName: "教师权限",
+        role: "teacher",
+        initialPassword: "初始密码1234",
+        newPassword: "新密码45678",
+      });
+      const studentCookie = await activateAccount({
+        loginName: "s9302",
+        displayName: "学生权限",
+        role: "student",
+        initialPassword: "初始密码1234",
+        newPassword: "新密码45678",
+      });
+
+      const administrativeClass = await createAdministrativeClass("高三 7 班");
+      const created = await createStudent({
+        studentNumber: "s9303",
+        name: "受保护学生",
+        administrativeClassId: administrativeClass.id,
+        initialPassword: "初始密码1234",
+      });
+      const studentId = ((await created.json()) as { student: { id: string } })
+        .student.id;
+
+      for (const cookie of [teacherCookie, studentCookie]) {
+        const attempts: Array<[string, string, Json | undefined]> = [
+          ["GET", "/api/admin/students", undefined],
+          [
+            "POST",
+            "/api/admin/students",
+            {
+              studentNumber: "s9304",
+              name: "越权建学生",
+              administrativeClassId: administrativeClass.id,
+              initialPassword: "初始密码1234",
+            },
+          ],
+          [
+            "PATCH",
+            `/api/admin/students/${studentId}`,
+            { enrollmentStatus: "graduated" },
+          ],
+          ["GET", "/api/admin/administrative-classes", undefined],
+          [
+            "POST",
+            "/api/admin/administrative-classes",
+            { name: "越权行政班" },
+          ],
+          [
+            "PATCH",
+            `/api/admin/administrative-classes/${administrativeClass.id}`,
+            { name: "越权改名" },
+          ],
+        ];
+
+        for (const [method, route, body] of attempts) {
+          const response = await api(method as "GET", route, body, cookie);
+          expect(response.status).toBe(403);
+          expect(((await response.json()) as Json).error).toBe("无权访问。");
+        }
+      }
+
+      // 越权请求必须在服务端被拒绝，数据保持原样。
+      const students = await queryRows<{ count: number }>(
+        app.schema!,
+        "select count(*)::int as count from students where student_number = 's9304'",
+      );
+      expect(students[0]!.count).toBe(0);
+
+      const status = await queryRows<{ enrollment_status: string }>(
+        app.schema!,
+        "select enrollment_status from students where id = $1",
+        [studentId],
+      );
+      expect(status[0]!.enrollment_status).toBe("enrolled");
+
+      const classes = await queryRows<{ name: string }>(
+        app.schema!,
+        "select name from administrative_classes where id = $1",
+        [administrativeClass.id],
+      );
+      expect(classes[0]!.name).toBe("高三 7 班");
+    });
+
+    it("未登录访问学籍接口返回 401", async () => {
+      const response = await api("GET", "/api/admin/students");
+      expect(response.status).toBe(401);
+      expect(((await response.json()) as Json).error).toBe("请先登录。");
+    });
+  });
+
+  describe("学籍管理页面", () => {
+    it("教务管理员可按行政班浏览名单，并看到每人的学籍状态", async () => {
+      const administrativeClass = await createAdministrativeClass("高三 8 班");
+      const created = await createStudent({
+        studentNumber: "s9401",
+        name: "页面生",
+        administrativeClassId: administrativeClass.id,
+        enrollmentStatus: "suspended",
+        initialPassword: "初始密码1234",
+      });
+      expect(created.status).toBe(201);
+
+      const response = await page("/admin/students", adminCookie);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("学籍管理");
+      expect(html).toContain("行政班");
+      expect(html).toContain("学号");
+      expect(html).toContain("学籍状态");
+      expect(html).toContain("高三 8 班");
+      expect(html).toContain("页面生");
+      expect(html).toContain("休学");
+      expect(html).not.toContain("$argon2");
+
+      const filtered = await page(
+        `/admin/students?administrativeClassId=${administrativeClass.id}`,
+        adminCookie,
+      );
+      expect(filtered.status).toBe(200);
+      const filteredHtml = await filtered.text();
+      expect(filteredHtml).toContain("页面生");
+      expect(filteredHtml).toContain("休学");
+    });
+
+    it("教师与学生访问学籍管理页面返回 403", async () => {
+      const teacherCookie = await activateAccount({
+        loginName: "t9411",
+        displayName: "教师页面",
+        role: "teacher",
+        initialPassword: "初始密码1234",
+        newPassword: "新密码45678",
+      });
+      const studentCookie = await activateAccount({
+        loginName: "s9412",
+        displayName: "学生页面",
+        role: "student",
+        initialPassword: "初始密码1234",
+        newPassword: "新密码45678",
+      });
+
+      for (const cookie of [teacherCookie, studentCookie]) {
+        const response = await page("/admin/students", cookie);
+        expect(response.status).toBe(403);
+        expect(await response.text()).toContain("无权访问");
+      }
+
+      const anonymous = await page("/admin/students");
+      expect([303, 307, 308]).toContain(anonymous.status);
+      expect(anonymous.headers.get("location")).toBe(
+        "/login?next=%2Fadmin%2Fstudents",
+      );
+    });
+  });
 });

@@ -26,7 +26,10 @@ export default async function AdminPage() {
             当前账号：{user.displayName}（{user.loginName}）
           </p>
         </div>
-        <LogoutButton />
+        <div className="header-actions">
+          <a href="/admin/students">学籍管理</a>
+          <LogoutButton />
+        </div>
       </header>
 
       <section>
