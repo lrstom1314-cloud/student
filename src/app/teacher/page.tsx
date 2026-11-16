@@ -1,0 +1,23 @@
+import { LogoutButton } from "@/components/logout-button";
+import { requirePageUser } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+
+export default async function TeacherPage() {
+  const user = await requirePageUser("/teacher", { roles: ["teacher"] });
+
+  return (
+    <main className="page">
+      <header className="page-header">
+        <div>
+          <h1>教师工作台</h1>
+          <p>
+            当前账号：{user.displayName}（{user.loginName}）
+          </p>
+        </div>
+        <LogoutButton />
+      </header>
+      <p>教学班、课表与成绩将在后续功能中加入。</p>
+    </main>
+  );
+}
