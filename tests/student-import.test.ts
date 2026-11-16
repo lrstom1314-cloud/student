@@ -272,4 +272,85 @@ describe("CSV 批量导入学生", () => {
     expect(html).not.toContain("$argon2");
     expect(html).not.toContain(zhang.initialPassword!);
   });
+
+  it("重复上传同一份名单时以学号为键更新，不新建学生也不改动密码", async () => {
+    const classA = await createAdministrativeClass("高二 2 班");
+    const classB = await createAdministrativeClass("高二 3 班");
+
+    const first = await importBody(
+      await importCsv(
+        "学号,姓名,行政班,学籍状态\r\ns2026010,原名生,高二 2 班,在读\r\n",
+      ),
+    );
+    const createdRow = rowFor(first, "s2026010");
+    expect(createdRow.status).toBe("created");
+    const originalPassword = createdRow.initialPassword!;
+    expect(originalPassword).toBeTruthy();
+
+    const firstLogin = await login("s2026010", originalPassword);
+    expect(firstLogin.response.status).toBe(200);
+    expect(String(firstLogin.body.redirectTo)).toContain("/change-password");
+
+    const before = await queryRows<{
+      student_id: string;
+      password_hash: string;
+      must_change_password: boolean;
+    }>(
+      app.schema!,
+      `select s.id as student_id, a.password_hash, a.must_change_password
+       from students s join accounts a on a.id = s.account_id
+       where s.student_number = 's2026010'`,
+    );
+
+    const second = await importBody(
+      await importCsv(
+        "学号,姓名,行政班,学籍状态\r\ns2026010,改名生,高二 3 班,休学\r\n",
+      ),
+    );
+    expect(second).toMatchObject({ created: 0, updated: 1, failed: 0 });
+    const updatedRow = rowFor(second, "s2026010");
+    expect(updatedRow.status).toBe("updated");
+    expect(updatedRow.initialPassword).toBeUndefined();
+
+    const after = await queryRows<{
+      student_id: string;
+      name: string;
+      enrollment_status: string;
+      class_id: string;
+      class_name: string;
+      password_hash: string;
+      must_change_password: boolean;
+    }>(
+      app.schema!,
+      `select s.id as student_id, s.name, s.enrollment_status,
+              s.administrative_class_id as class_id, c.name as class_name,
+              a.password_hash, a.must_change_password
+       from students s
+       join administrative_classes c on c.id = s.administrative_class_id
+       join accounts a on a.id = s.account_id
+       where s.student_number = 's2026010'`,
+    );
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({
+      student_id: before[0]!.student_id,
+      name: "改名生",
+      enrollment_status: "suspended",
+      class_id: classB.id,
+      class_name: "高二 3 班",
+      password_hash: before[0]!.password_hash,
+      must_change_password: before[0]!.must_change_password,
+    });
+    expect(after[0]!.class_id).not.toBe(classA.id);
+
+    // 休学后按学籍状态规则不能登录：说明状态更新确实生效了。
+    const blockedLogin = await login("s2026010", originalPassword);
+    expect(blockedLogin.response.status).toBe(401);
+
+    const pageResponse = await page("/admin/students", adminCookie);
+    const html = await pageResponse.text();
+    expect(html).toContain("改名生");
+    expect(html).toContain("高二 3 班");
+    expect(html).toContain("休学");
+    expect(html).not.toContain("原名生");
+  });
 });
