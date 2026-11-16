@@ -477,6 +477,44 @@ describe("CSV 批量导入学生", () => {
     expect(written[0]!.count).toBe(0);
   });
 
+  it("教师与学生上传 CSV 返回 403，未登录返回 401，且不写入数据", async () => {
+    await createAdministrativeClass("高二 8 班");
+
+    const teacherCookie = await activateAccount({
+      loginName: "import-teacher",
+      displayName: "导入教师",
+      role: "teacher",
+      initialPassword: "初始密码1234",
+      newPassword: "新密码45678",
+    });
+    const studentCookie = await activateAccount({
+      loginName: "import-student",
+      displayName: "导入学生",
+      role: "student",
+      initialPassword: "初始密码1234",
+      newPassword: "新密码45678",
+    });
+
+    const csv =
+      "学号,姓名,行政班,学籍状态\r\ns2026301,越权生,高二 8 班,在读\r\n";
+
+    for (const cookie of [teacherCookie, studentCookie]) {
+      const response = await importCsv(csv, cookie);
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as Json).error).toBe("无权访问。");
+    }
+
+    const anonymous = await importCsv(csv, "");
+    expect(anonymous.status).toBe(401);
+    expect(((await anonymous.json()) as Json).error).toBe("请先登录。");
+
+    const written = await queryRows<{ count: number }>(
+      app.schema!,
+      "select count(*)::int as count from students where student_number = 's2026301'",
+    );
+    expect(written[0]!.count).toBe(0);
+  });
+
   it("CSV 不接受密码列：新学生仍使用系统生成的初始密码并强制改密", async () => {
     await createAdministrativeClass("高二 6 班");
 
