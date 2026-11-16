@@ -728,6 +728,16 @@ describe("学生端首屏：我的课表", () => {
     expect(html).not.toContain("本周不上");
     // 不在教学周内时课表本身仍然完整可见。
     expect(html).toContain("教学楼 A101");
+
+    // 开学日期在未来：尚未开学，同样视为不在教学周内。
+    await setStartsOnOk(ids.termFirst, schoolDate(7));
+    const future = await studentTimetable();
+    expect(future.computedWeek).toBe(0);
+    expect(future.inTeachingWeek).toBe(false);
+    expect(future.teachingWeek).toBeNull();
+    const futureHtml = await (await page("/student", studentACookie)).text();
+    expect(futureHtml).toContain("尚未开学");
+    expect(futureHtml).toContain("不在教学周内");
   });
 
   it("学期未设置开学日期时，课表仍可用，只是不标本周并给出轻提示", async () => {
