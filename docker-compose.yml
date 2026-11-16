@@ -44,5 +44,35 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # 每日备份：首次启动立即备份一次，之后按 BACKUP_SCHEDULE 运行。
+  # 备份失败会在容器日志里留下 ERROR 行，并让 healthcheck 变为 unhealthy。
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-student}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-student}
+      BACKUP_DIR: /backups
+      BACKUP_OFFSITE_DIR: /offsite
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_SCHEDULE: "${BACKUP_SCHEDULE:-0 3 * * *}"
+    entrypoint: ["/bin/sh", "/scripts/backup-entrypoint.sh"]
+    volumes:
+      - ./backups:/backups
+      - ${BACKUP_OFFSITE_HOST_DIR:-./backups/offsite}:/offsite
+      - ./scripts:/scripts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/scripts/backup-healthcheck.sh"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+    restart: unless-stopped
+
 volumes:
   student-db-data:
