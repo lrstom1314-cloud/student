@@ -22,7 +22,7 @@ export default async function TeacherPage() {
         <LogoutButton />
       </header>
       <CurrentTermScope />
-      <p>课表与成绩将在后续功能中加入。</p>
+      <p>课表可在「我的教学班」详情页维护；成绩录入将在后续功能中加入。</p>
     </main>
   );
 }

@@ -274,3 +274,64 @@ export const teachingClassStudents = pgTable(
     index("teaching_class_students_student_id_idx").on(table.studentId),
   ],
 );
+
+/**
+ * 单双周标记：每周 / 单周 / 双周。
+ * 术语见 GLOSSARY.md：课表由星期、节次、周次范围与单双周构成。
+ */
+export const weekParity = pgEnum("week_parity", ["every", "odd", "even"]);
+
+export type WeekParity = (typeof weekParity.enumValues)[number];
+
+/**
+ * 课表条目：一节连续的上课安排。教室名是自由文本，不建教室实体。
+ * 星期用 1（周一）到 7（周日），节次与周次都用闭区间。
+ *
+ * 冲突不落库：它由当前所有条目实时算出，因此删掉一条后相关警告自然消失。
+ * 只有「教师已确认冲突」的痕迹留在条目上，作为这次排课的记录。
+ */
+export const timetableEntries = pgTable(
+  "timetable_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teachingClassId: uuid("teaching_class_id")
+      .notNull()
+      .references(() => teachingClasses.id, { onDelete: "cascade" }),
+    weekday: integer("weekday").notNull(),
+    startPeriod: integer("start_period").notNull(),
+    endPeriod: integer("end_period").notNull(),
+    startWeek: integer("start_week").notNull(),
+    endWeek: integer("end_week").notNull(),
+    weekParity: weekParity("week_parity").notNull(),
+    classroom: text("classroom").notNull(),
+    conflictAcknowledgedAt: timestamp("conflict_acknowledged_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("timetable_entries_teaching_class_id_idx").on(table.teachingClassId),
+    index("timetable_entries_weekday_idx").on(table.weekday),
+    check(
+      "timetable_entries_weekday_range",
+      sql`${table.weekday} between 1 and 7`,
+    ),
+    check(
+      "timetable_entries_period_range",
+      sql`${table.startPeriod} >= 1 and ${table.endPeriod} >= ${table.startPeriod} and ${table.endPeriod} <= 20`,
+    ),
+    check(
+      "timetable_entries_week_range",
+      sql`${table.startWeek} >= 1 and ${table.endWeek} >= ${table.startWeek} and ${table.endWeek} <= 30`,
+    ),
+    check(
+      "timetable_entries_classroom_not_blank",
+      sql`length(btrim(${table.classroom})) > 0`,
+    ),
+  ],
+);
