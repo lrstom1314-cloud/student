@@ -202,8 +202,8 @@ curl -fsS http://localhost:3000/healthz && echo
    左侧能看到学年、学期、课程、教学班、学生。
 3. **学生能登录并看到自己的数据**：用备份时已存在的学号登录（登录名为学号；
    若该账号仍带「需强制改密」标记，先完成改密），进入 `/student`，
-   能看到自己的课表。
-4. **成绩数据存在**：成绩查询界面在工单 #11 完成后上线；在此之前用 SQL 验证：
+   能看到自己的课表；「我的成绩」列出本学期已发布的总评，展开某门课能看到成绩项明细。
+4. **成绩数据存在且对得上**：在页面上核对一名学生的总评，与 SQL 结果一致；再确认明细齐全：
    ```sh
    docker compose exec -T db psql -U "${POSTGRES_USER:-student}" -d student -c "
      select count(*) as 总评数 from grade_overalls;
