@@ -623,7 +623,7 @@ export const gradeChangeLogs = pgTable(
     teachingClassId: uuid("teaching_class_id")
       .notNull()
       .references(() => teachingClasses.id, { onDelete: "cascade" }),
-    // 发布/解锁是教学班级动作，没有目标学生；其余动作必须有目标学生。
+    // 发布/解锁是教学班动作，没有目标学生；其余动作必须有目标学生。
     studentId: uuid("student_id").references(() => students.id, {
       onDelete: "restrict",
     }),

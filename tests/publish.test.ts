@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestApp, type TestApp } from "./support/app";
 import { queryRows } from "./support/db";
 import { databaseUrl, ROOT } from "./support/env";
+import { loginCookie } from "./support/login";
 
 const ADMIN_LOGIN = "admin11";
 const ADMIN_PASSWORD = "管理员密码123";
@@ -146,12 +147,6 @@ async function page(route: string, cookie?: string): Promise<Response> {
   });
 }
 
-function sessionCookie(response: Response): string {
-  const raw = response.headers.get("set-cookie");
-  if (!raw) return "";
-  return raw.split(";")[0] ?? "";
-}
-
 function bootstrapAccount(input: {
   loginName: string;
   displayName: string;
@@ -190,14 +185,9 @@ function bootstrapAccount(input: {
   }
 }
 
-async function login(loginName: string, password: string): Promise<string> {
-  const response = await api("POST", "/api/auth/login", {
-    loginName,
-    password,
-  });
-  expect(response.status).toBe(200);
-  return sessionCookie(response);
-}
+/** 登录逻辑集中在 tests/support/login.ts，这里只固定本文件的 baseUrl。 */
+const login = (loginName: string, password: string): Promise<string> =>
+  loginCookie(app.baseUrl, loginName, password);
 
 async function errorOf(response: Response): Promise<string> {
   const body = (await response.json()) as { error?: unknown };
@@ -1136,7 +1126,7 @@ describe("发布、锁定与变更日志", () => {
       ).toBe(true);
     });
 
-    it("管理员可按教学班与按学生查询；教师只能查自己任教的教学班", async () => {
+    it("教务管理员可按教学班与按学生查询；教师只能查自己任教的教学班", async () => {
       // 给第二个教学班制造日志，验证按学生查询会跨教学班。
       await createGradeItemOk(ids.classSecond, {
         name: "单元测验",

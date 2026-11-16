@@ -75,7 +75,7 @@ cp .env.example .env
 
 ### 创建第一个教务管理员
 
-系统不提供公开的管理员注册入口。首次部署、迁移完成后，用脚本创建：
+系统不提供公开的教务管理员注册入口。首次部署、迁移完成后，用脚本创建：
 
 ```sh
 DATABASE_URL='postgres://...' npm run account:create -- \
@@ -170,14 +170,14 @@ SKIP_BUILD=1 npm test
 - `DATABASE_URL` 必须指向可用的 PostgreSQL，账号需要 `CREATE SCHEMA` 权限（Compose 中的应用账号满足）。
 - 测试数据只使用虚构学生（如「张三」「李四」）与虚构班级，禁止真实姓名、学号或成绩。
 - `tests/auth.test.ts` 覆盖账号创建、Argon2id 存储、统一登录失败提示、会话 cookie
-  属性与过期、强制改密、管理员重置、停用账号和三角色权限边界。
+  属性与过期、强制改密、教务管理员重置、停用账号和三角色权限边界。
 - 数据库不可用时会明确报错并提示先启动 PostgreSQL，而不是静默跳过。
 
 ### 验收剧本（Playwright）
 
-第一版验收剧本是一条真实浏览器的端到端用例，覆盖「管理员导入 2 个行政班共 20 名学生
+第一版验收剧本是一条真实浏览器的端到端用例，覆盖「教务管理员导入 2 个行政班共 20 名学生
 → 建课程与教学班 → 排含单双周变化的课表 → 教师录入 3 个成绩项并发布
-→ 学生登录只看到自己的课表与总评 → 管理员在变更日志里看到本次发布」。
+→ 学生登录只看到自己的课表与总评 → 教务管理员在变更日志里看到本次发布」。
 它只跑 happy path，测试数据全部虚构（见 `tests/e2e/fixtures/students.csv`）。
 
 ```sh
@@ -223,7 +223,7 @@ src/db/             PostgreSQL 连接与 Drizzle 表定义
 src/lib/            认证、会话、密码与账号逻辑
 drizzle/            版本化迁移与 journal
 scripts/migrate.mjs 迁移执行器（应用与容器共用，启动时先检查数据库连通性）
-scripts/create-account.mjs 首个管理员开通脚本
+scripts/create-account.mjs 首个教务管理员开通脚本
 scripts/backup.sh   单次备份：pg_dump → 按日期命名 → 异地副本 → 清理
 scripts/backup-prune.sh 保留策略：删除超过保留天数的备份
 scripts/backup-entrypoint.sh 备份容器入口：首次备份 + 安装 cron
