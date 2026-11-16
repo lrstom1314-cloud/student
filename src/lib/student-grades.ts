@@ -1,5 +1,6 @@
 import { getDb } from "@/db";
 import { termLabel } from "@/lib/term-labels";
+import { getCurrentTerm, type TermSummary } from "@/lib/terms";
 
 /**
  * 学生看到的一门课：只有在该教学班发生过发布之后才有成绩字段。
@@ -43,6 +44,21 @@ export type StudentGradeCourse =
       }>;
     };
 
+export type StudentGradeReport = {
+  /** 全局唯一的当前学期；未设置时为 null。 */
+  currentTerm: TermSummary | null;
+  /** 学生端固定的学期范围，永远等于 currentTerm，不开放历史学期入口。 */
+  term: TermSummary | null;
+  student: { id: string; studentNumber: string; name: string } | null;
+  courses: StudentGradeCourse[];
+};
+
+type StudentRow = {
+  id: string;
+  student_number: string;
+  name: string;
+};
+
 type CourseRow = {
   id: string;
   display_name: string;
@@ -77,27 +93,30 @@ function toNumber(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function findStudentIdByAccountId(
+async function findStudentByAccountId(
   accountId: string,
-): Promise<string | null> {
+): Promise<StudentRow | null> {
   const sql = getDb();
-  const rows = await sql<{ id: string }[]>`
-    select id from students where account_id = ${accountId} limit 1
+  const rows = await sql<StudentRow[]>`
+    select id, student_number, name
+    from students
+    where account_id = ${accountId}
+    limit 1
   `;
-  return rows[0]?.id ?? null;
+  return rows[0] ?? null;
 }
 
 /**
- * 学生本人在某学期的已发布成绩。列表覆盖本人全部教学班：
- * 尚未发布的显示「暂无成绩」，已发布的读取最近一次发布的快照。
+ * 学生本人的成绩：范围固定为当前学期，只取自己所在的教学班。
+ *
+ * 读取路径严格限于发布快照（grade_publications / grade_publication_*），
+ * 从不读取 student_grades 或 grade_overalls 这些实时表。因此教师解锁后
+ * 继续改分时，学生仍看到上一次发布的完整结果。
  */
-export async function listStudentPublishedGrades(
-  accountId: string,
+async function listPublishedCourses(
+  studentId: string,
   termId: string,
 ): Promise<StudentGradeCourse[]> {
-  const studentId = await findStudentIdByAccountId(accountId);
-  if (!studentId) return [];
-
   const sql = getDb();
   const courseRows = await sql<CourseRow[]>`
     select tc.id, tc.display_name, c.name as course_name,
@@ -131,6 +150,7 @@ export async function listStudentPublishedGrades(
       termLabel: termLabel(row.start_year, row.half),
     };
 
+    // 从未发布（或已发布后被解锁且尚未重新发布）的教学班没有任何可见数据。
     if (row.publication_id === null) {
       courses.push({ teachingClass, published: false });
       continue;
@@ -180,6 +200,7 @@ export async function listStudentPublishedGrades(
         finalSource: overall.final_source,
         status: overall.status,
       },
+      // 快照里没有得分行就是缺考/未录入：保留 null，界面绝不折算成 0 分。
       items: itemRows.map((item) => ({
         gradeItemId: item.grade_item_id,
         name: item.name,
@@ -191,4 +212,33 @@ export async function listStudentPublishedGrades(
   }
 
   return courses;
+}
+
+/**
+ * 学生成绩报告的入口：当前学期 + 学生本人 + 已发布快照。
+ * 未设置当前学期时返回空课程列表，由页面给出与「暂无成绩」不同的提示。
+ */
+export async function getStudentGradeReport(
+  accountId: string,
+): Promise<StudentGradeReport> {
+  const currentTerm = await getCurrentTerm();
+  const student = await findStudentByAccountId(accountId);
+  if (!student) {
+    return { currentTerm, term: currentTerm, student: null, courses: [] };
+  }
+
+  const courses = currentTerm
+    ? await listPublishedCourses(student.id, currentTerm.id)
+    : [];
+
+  return {
+    currentTerm,
+    term: currentTerm,
+    student: {
+      id: student.id,
+      studentNumber: student.student_number,
+      name: student.name,
+    },
+    courses,
+  };
 }

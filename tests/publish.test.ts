@@ -568,7 +568,8 @@ describe("发布、锁定与变更日志", () => {
       const serialized = JSON.stringify(course);
       expect(serialized).not.toContain("平时");
       expect(serialized).not.toContain("incomplete");
-      expect(serialized).not.toContain("85");
+      // 草稿态只允许有两个字段；不要用随机 UUID 做子串匹配（可能恰好含 85）。
+      expect(Object.keys(course).sort()).toEqual(["published", "teachingClass"]);
       expect(serialized).not.toContain("未完成");
 
       const studentPage = await page("/student", studentCookie);
