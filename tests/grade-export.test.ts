@@ -329,6 +329,14 @@ describe("成绩导出与成绩单打印", () => {
     expect(term.status).toBe(201);
     ids.term = ((await term.json()) as { term: { id: string } }).term.id;
 
+    const currentTerm = await api(
+      "POST",
+      "/api/admin/current-term",
+      { termId: ids.term, confirmed: true },
+      adminCookie,
+    );
+    expect(currentTerm.status).toBe(200);
+
     const adminClass = await api(
       "POST",
       "/api/admin/administrative-classes",
@@ -414,9 +422,9 @@ describe("成绩导出与成绩单打印", () => {
           { studentId: ids.studentLi, gradeItemId: daily.id, score: 100 },
           { studentId: ids.studentLi, gradeItemId: midterm.id, score: 100 },
           { studentId: ids.studentLi, gradeItemId: finalExam.id, score: 100 },
-          // 王五缺「平时」，缺考不能被写成 0 分。
+          // 王五缺「平时」，缺考不能被写成 0 分；「期末」真实 0 分仍是 0。
           { studentId: ids.studentWang, gradeItemId: midterm.id, score: 60 },
-          { studentId: ids.studentWang, gradeItemId: finalExam.id, score: 70 },
+          { studentId: ids.studentWang, gradeItemId: finalExam.id, score: 0 },
         ])
       ).status,
     ).toBe(200);
@@ -486,7 +494,7 @@ describe("成绩导出与成绩单打印", () => {
     expect(csv.lines.slice(1)).toEqual([
       `${STUDENT_ZHANG_LOGIN},张三,80,90,85,85`,
       `${STUDENT_LI_LOGIN},李四,100,100,100,98`,
-      `${STUDENT_WANG_LOGIN},王五,未录入,60,70,未录入`,
+      `${STUDENT_WANG_LOGIN},王五,未录入,60,0,未录入`,
     ]);
     expect(csv.lines.join("\n")).not.toContain(STUDENT_ZHAO_LOGIN);
   });
@@ -536,6 +544,15 @@ describe("成绩导出与成绩单打印", () => {
     );
     expect(missing.status).toBe(404);
     expect(await errorOf(missing)).toBe("教学班不存在。");
+
+    const malformed = await api(
+      "GET",
+      exportUrl("not-a-uuid"),
+      undefined,
+      teacherACookie,
+    );
+    expect(malformed.status).toBe(404);
+    expect(await errorOf(malformed)).toBe("教学班不存在。");
   });
 
   it("解锁期间改分不影响导出：仍取最后一次发布的快照", async () => {
@@ -618,5 +635,88 @@ describe("成绩导出与成绩单打印", () => {
     expect(csv.lines[0]).toContain("不是正式成绩");
     expect(csv.lines[1]).toBe("学号,姓名,平时,总评");
     expect(csv.lines[2]).toBe(`${STUDENT_ZHAO_LOGIN},赵六,70,70`);
+  });
+
+  it("学生可打开自己的成绩单页面，页面提供打印按钮与打印页眉", async () => {
+    const response = await page("/student/transcript", studentLiCookie);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+
+    expect(html).toContain("学生成绩单");
+    expect(html).toContain("李四");
+    expect(html).toContain(STUDENT_LI_LOGIN);
+    expect(html).toContain(TERM_LABEL);
+    expect(html).toContain("数学");
+    expect(html).toContain("总评");
+    expect(html).toContain("98");
+    for (const itemName of ["平时", "期中", "期末"]) {
+      expect(html).toContain(itemName);
+    }
+
+    // 打印按钮与返回入口都在 no-print 容器里，打印时整块隐藏。
+    expect(html).toContain('class="no-print');
+    expect(html).toContain("打印成绩单");
+    expect(html).toContain('href="/student"');
+    expect(html).toContain('class="transcript-print-header"');
+    expect(html).not.toContain("<nav");
+
+    const noPrintMarkup = [...html.matchAll(/<div class="no-print[^"]*">([\s\S]*?)<\/div>/g)]
+      .map((match) => match[1]!)
+      .join("");
+    expect(noPrintMarkup).toContain("打印成绩单");
+    expect((html.match(/<button/g) ?? []).length).toBe(
+      (noPrintMarkup.match(/<button/g) ?? []).length,
+    );
+
+    // 只看得到自己的数据。
+    expect(html).not.toContain("张三");
+    expect(html).not.toContain("王五");
+    expect(html).not.toContain(STUDENT_ZHANG_LOGIN);
+    expect(html).not.toContain("Internal Server Error");
+
+    // 学生入口页能直接走到成绩单。
+    const studentHome = await (await page("/student", studentLiCookie)).text();
+    expect(studentHome).toContain('href="/student/transcript"');
+    expect(studentHome).toContain("成绩单");
+  });
+
+  it("成绩单打印样式隐藏导航与按钮，并设置分页与页眉", async () => {
+    const html = await (await page("/student/transcript", studentLiCookie)).text();
+    const hrefs = [...html.matchAll(/<link[^>]+href="([^"]+\.css)"/g)].map(
+      (match) => match[1]!,
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+
+    let css = "";
+    for (const href of hrefs) {
+      const asset = await fetch(`${app.baseUrl}${href}`);
+      expect(asset.status).toBe(200);
+      css += await asset.text();
+    }
+
+    // 打印媒体下必须真的把 no-print 块设为 none。
+    expect(css).toMatch(/@media\s+print\s*\{[\s\S]*?\.no-print[^{]*\{[^}]*display\s*:\s*none/);
+    // 打印页眉与合理的分页：页边距、课程块不跨页切断。
+    expect(css).toMatch(/@page\s*\{[^}]*margin/);
+    expect(css).toContain(".transcript-print-header");
+    expect(css).toMatch(
+      /@media\s+print\s*\{[\s\S]*?\.transcript-print-header[^{]*\{[^}]*display\s*:\s*block/,
+    );
+    expect(css).toMatch(
+      /\.transcript-course[^{]*\{[^}]*break-inside\s*:\s*avoid/,
+    );
+    expect(css).toMatch(
+      /\.transcript-course[^{]*\{[^}]*page-break-inside\s*:\s*avoid/,
+    );
+  });
+
+  it("教师不能打开学生成绩单，未登录被带回登录页", async () => {
+    const denied = await page("/student/transcript", teacherACookie);
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).toContain("无权访问");
+
+    const anonymous = await page("/student/transcript");
+    expect(anonymous.status).toBe(307);
+    expect(anonymous.headers.get("location") ?? "").toContain("/login");
   });
 });

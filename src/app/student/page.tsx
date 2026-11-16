@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
 import {
@@ -156,6 +158,9 @@ export default async function StudentPage() {
           </p>
           <p className="hint">
             这里只显示你自己的教学班与已发布的成绩，看不到其他同学的数据。
+          </p>
+          <p>
+            <Link href="/student/transcript">成绩单（可打印）</Link>
           </p>
         </div>
         <LogoutButton />
