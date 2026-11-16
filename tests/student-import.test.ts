@@ -515,6 +515,71 @@ describe("CSV 批量导入学生", () => {
     expect(written[0]!.count).toBe(0);
   });
 
+  it("学号已有学生账号时只建立学籍，不返回也不改动其现有密码", async () => {
+    const originalCookie = await activateAccount({
+      loginName: "s2026401",
+      displayName: "先有账号",
+      role: "student",
+      initialPassword: "初始密码1234",
+      newPassword: "已改密码45678",
+    });
+    expect(originalCookie).not.toBe("");
+
+    const before = await queryRows<{
+      password_hash: string;
+      must_change_password: boolean;
+    }>(
+      app.schema!,
+      "select password_hash, must_change_password from accounts where login_name = 's2026401'",
+    );
+
+    await createAdministrativeClass("高二 9 班");
+    const body = await importBody(
+      await importCsv(
+        "学号,姓名,行政班,学籍状态\r\ns2026401,先有账号,高二 9 班,在读\r\n",
+      ),
+    );
+    const row = rowFor(body, "s2026401");
+    expect(row.status).toBe("created");
+    expect(row.initialPassword).toBeUndefined();
+
+    const after = await queryRows<{
+      password_hash: string;
+      must_change_password: boolean;
+      student_number: string;
+      class_name: string;
+    }>(
+      app.schema!,
+      `select a.password_hash, a.must_change_password,
+              s.student_number, c.name as class_name
+       from students s
+       join accounts a on a.id = s.account_id
+       join administrative_classes c on c.id = s.administrative_class_id
+       where s.student_number = 's2026401'`,
+    );
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({
+      password_hash: before[0]!.password_hash,
+      must_change_password: before[0]!.must_change_password,
+      class_name: "高二 9 班",
+    });
+
+    const stillWorks = await login("s2026401", "已改密码45678");
+    expect(stillWorks.response.status).toBe(200);
+    expect(stillWorks.body.redirectTo).toBe("/student");
+  });
+
+  it("学籍管理页面提供批量导入入口", async () => {
+    const response = await page("/admin/students", adminCookie);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("批量导入学生");
+    expect(html).toContain("CSV");
+    expect(html).toContain("上传并导入");
+    expect(html).toContain("行政班必须事先创建");
+    expect(html).toContain('accept=".csv,text/csv"');
+  });
+
   it("CSV 不接受密码列：新学生仍使用系统生成的初始密码并强制改密", async () => {
     await createAdministrativeClass("高二 6 班");
 
