@@ -266,6 +266,44 @@ describe("学年与学期", () => {
     );
     expect(rows[0]!.count).toBe(2);
   });
+
+  it("学期列表按学年分组，教师与学生都可读取", async () => {
+    const created = await createTerm(await academicYearIdOf(2025), "first");
+    expect(created.status).toBe(201);
+
+    for (const cookie of [studentCookie, teacherCookie, adminCookie]) {
+      const response = await api("GET", "/api/terms", undefined, cookie);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        currentTerm: unknown;
+        academicYears: {
+          label: string;
+          terms: { label: string; half: string }[];
+        }[];
+      };
+
+      expect(body.currentTerm).toBeNull();
+      expect(body.academicYears.map((year) => year.label)).toEqual([
+        "2026-2027",
+        "2025-2026",
+      ]);
+      expect(body.academicYears[0]!.terms.map((term) => term.half)).toEqual([
+        "first",
+        "second",
+      ]);
+      expect(body.academicYears[0]!.terms.map((term) => term.label)).toEqual([
+        "2026-2027 学年上学期",
+        "2026-2027 学年下学期",
+      ]);
+      expect(body.academicYears[1]!.terms.map((term) => term.label)).toEqual([
+        "2025-2026 学年上学期",
+      ]);
+    }
+
+    const anonymous = await api("GET", "/api/terms");
+    expect(anonymous.status).toBe(401);
+  });
 });
 
 async function createTerm(
