@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { LogoutButton } from "@/components/logout-button";
+import { TimetableSection } from "@/components/timetable-section";
 import { listAdministrativeClasses } from "@/lib/administrative-classes";
 import { requirePageUser } from "@/lib/auth";
 import { ENROLLMENT_STATUS_LABELS } from "@/lib/enrollment-status";
 import { isUuid } from "@/lib/http";
 import { listStudents } from "@/lib/students";
 import { getTeachingClassDetail } from "@/lib/teaching-classes";
+import { getTimetable } from "@/lib/timetable";
 
 import {
   AddStudentForm,
@@ -40,6 +42,7 @@ export default async function AdminTeachingClassPage({
     listStudents(),
     listAdministrativeClasses(),
   ]);
+  const timetable = await getTimetable(id);
   const rosterIds = new Set(teachingClass.students.map((student) => student.id));
   const candidates = students.filter(
     (student) =>
@@ -95,6 +98,15 @@ export default async function AdminTeachingClassPage({
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <section>
+        <h2>课表</h2>
+        <TimetableSection
+          teachingClassId={teachingClass.id}
+          entries={timetable.entries}
+          conflicts={timetable.conflicts}
+        />
       </section>
 
       <section>

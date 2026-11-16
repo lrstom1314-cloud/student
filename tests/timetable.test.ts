@@ -197,6 +197,13 @@ async function listTimetable(
   return (await response.json()) as TimetableJson;
 }
 
+async function page(route: string, cookie?: string): Promise<Response> {
+  return fetch(`${app.baseUrl}${route}`, {
+    headers: cookie ? { cookie } : {},
+    redirect: "manual",
+  });
+}
+
 async function teachingClassIdOf(loginName: string): Promise<string> {
   const rows = await queryRows<{ id: string }>(
     app.schema!,
@@ -1046,6 +1053,81 @@ describe("课表录入与冲突告警", () => {
       expect(unchanged.entries.find((item) => item.id === entry.id)).toEqual(
         entry,
       );
+    });
+  });
+
+  describe("课表页面", () => {
+    it("教师端教学班详情页展示课表、冲突警告与「已确认冲突」痕迹", async () => {
+      const own = await page(
+        `/teacher/teaching-classes/${ids.tcA1}`,
+        teacherACookie,
+      );
+      expect(own.status).toBe(200);
+      const html = await own.text();
+      expect(html).toContain("课表");
+      expect(html).toContain("周一");
+      expect(html).toContain("第 1-2 节");
+      expect(html).toContain("第 1-16 周");
+      expect(html).toContain("每周");
+      expect(html).toContain("教学楼 A101");
+      expect(html).toContain("存在冲突（未确认）");
+      expect(html).toContain("当前有");
+      expect(html).toContain("同一教师");
+      expect(html).toContain("同一教室");
+      expect(html).toContain("添加课表条目");
+      expect(html).toContain("单双周");
+      expect(html).not.toContain("Internal Server Error");
+
+      const acknowledgedPage = await page(
+        `/teacher/teaching-classes/${ids.tcA2}`,
+        teacherACookie,
+      );
+      expect(acknowledgedPage.status).toBe(200);
+      expect(await acknowledgedPage.text()).toContain("已确认冲突");
+
+      const byTeacherB = await page(
+        `/teacher/teaching-classes/${ids.tcA1}`,
+        teacherBCookie,
+      );
+      expect(byTeacherB.status).toBe(403);
+
+      const byStudent = await page(
+        `/teacher/teaching-classes/${ids.tcA1}`,
+        studentCookie,
+      );
+      expect(byStudent.status).toBe(403);
+    });
+
+    it("教务管理员在教学班详情页也能看到并维护课表", async () => {
+      const response = await page(
+        `/admin/teaching-classes/${ids.tcA1}`,
+        adminCookie,
+      );
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("课表");
+      expect(html).toContain("周一");
+      expect(html).toContain("教学楼 A101");
+      expect(html).toContain("添加课表条目");
+      expect(html).not.toContain("服务暂时不可用");
+    });
+
+    it("尚未排课的教学班给出明确的空状态", async () => {
+      const teacherA = await teachingClassIdOf(TEACHER_A_LOGIN);
+      const emptyId = await createTeachingClass({
+        termId: ids.termFirst,
+        teacherAccountId: teacherA,
+        displayName: "高二 3 班 高等数学（未排课）",
+      });
+
+      const response = await page(
+        `/teacher/teaching-classes/${emptyId}`,
+        teacherACookie,
+      );
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("还没有课表");
+      expect(html).toContain("添加课表条目");
     });
   });
 });
