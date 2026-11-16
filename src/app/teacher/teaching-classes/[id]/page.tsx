@@ -44,6 +44,10 @@ export default async function TeacherTeachingClassPage({
             <Link href={`/teacher/teaching-classes/${id}/grades`}>
               录入成绩
             </Link>
+            {" · "}
+            <Link href={`/teacher/teaching-classes/${id}/grade-logs`}>
+              变更日志
+            </Link>
           </p>
         </div>
         <LogoutButton />

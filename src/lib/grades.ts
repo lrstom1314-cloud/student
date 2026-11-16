@@ -38,6 +38,16 @@ export type GradeSheetStudent = {
   overall: OverallSummary;
 };
 
+/** 发布是整体动作：教学班只有「草稿」与「已发布（锁定）」两种状态。 */
+export type GradeLock = {
+  state: "draft" | "published";
+  latestPublication: {
+    id: string;
+    version: number;
+    publishedAt: string;
+  } | null;
+};
+
 export type GradeSheet = {
   teachingClass: TeachingClassSummary;
   gradeItems: GradeItemSummary[];
@@ -45,7 +55,15 @@ export type GradeSheet = {
   weightComplete: boolean;
   weightWarning: string | null;
   students: GradeSheetStudent[];
+  lock: GradeLock;
 };
+
+/** 已发布时所有角色（包括教务管理员）的写入都被拒绝，必须先解锁。 */
+export const GRADE_LOCKED_MESSAGE =
+  "成绩已发布并锁定，需教务管理员解锁后才能修改。";
+
+const LOCKED_PUBLISH_MESSAGE =
+  "该教学班成绩已发布并锁定，如需重新发布请先由教务管理员解锁。";
 
 type GradeAccess =
   | { ok: true; teachingClass: TeachingClassSummary }
@@ -248,6 +266,18 @@ async function loadSheetParts(
     from grade_overalls
     where teaching_class_id = ${teachingClass.id}
   `;
+  const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
+    select grade_state from teaching_classes where id = ${teachingClass.id}
+  `;
+  const publicationRows = await tx<
+    { id: string; version: number; published_at: Date }[]
+  >`
+    select id, version, published_at
+    from grade_publications
+    where teaching_class_id = ${teachingClass.id}
+    order by version desc
+    limit 1
+  `;
 
   const gradeItems = itemRows.map(toGradeItem);
   const calcItems: CalcItem[] = itemRows.map((row) => ({
@@ -324,6 +354,8 @@ async function loadSheetParts(
     };
   });
 
+  const latest = publicationRows[0];
+
   return {
     teachingClass,
     gradeItems,
@@ -331,7 +363,43 @@ async function loadSheetParts(
     weightComplete,
     weightWarning,
     students,
+    lock: {
+      state: lockRows[0]?.grade_state ?? "draft",
+      latestPublication: latest
+        ? {
+            id: latest.id,
+            version: latest.version,
+            publishedAt: latest.published_at.toISOString(),
+          }
+        : null,
+    },
   };
+}
+
+type UnlockedCheck =
+  | { ok: true }
+  | { ok: false; status: number; error: string };
+
+/**
+ * 在写入事务里锁住教学班行并检查状态。发布/解锁也取同一行的锁，
+ * 因此「发布」与「保存成绩」不会交错，锁定语义没有竞态窗口。
+ */
+async function assertGradeUnlocked(
+  tx: TransactionSql,
+  teachingClassId: string,
+): Promise<UnlockedCheck> {
+  const rows = await tx<{ grade_state: "draft" | "published" }[]>`
+    select grade_state from teaching_classes
+    where id = ${teachingClassId}
+    for update
+  `;
+  if (rows.length === 0) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  if (rows[0]!.grade_state === "published") {
+    return { ok: false, status: 409, error: GRADE_LOCKED_MESSAGE };
+  }
+  return { ok: true };
 }
 
 export async function getGradeSheet(
@@ -404,9 +472,9 @@ async function recomputeOveralls(
 
 type LogInput = {
   teachingClassId: string;
-  studentId: string;
+  studentId: string | null;
   gradeItemId: string | null;
-  target: "grade_item" | "overall";
+  target: "grade_item" | "overall" | "teaching_class";
   action:
     | "record"
     | "update"
@@ -474,6 +542,9 @@ export async function saveScores(input: {
   const outcome = await sql.begin<
     { ok: true; updatedCount: number } | { ok: false; status: number; error: string }
   >(async (tx) => {
+    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
+    if (!unlocked.ok) return unlocked;
+
     const itemRows = await tx<{ id: string; max_score: string }[]>`
       select id, max_score::text as max_score
       from grade_items
@@ -626,6 +697,9 @@ export async function setOverallOverride(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
+    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
+    if (!unlocked.ok) return unlocked;
+
     const rosterRows = await tx<{ student_id: string }[]>`
       select student_id from teaching_class_students
       where teaching_class_id = ${input.teachingClassId}
@@ -718,6 +792,9 @@ export async function cancelOverallOverride(input: {
   const outcome = await sql.begin<
     { ok: true } | { ok: false; status: number; error: string }
   >(async (tx) => {
+    const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
+    if (!unlocked.ok) return unlocked;
+
     const overallRows = await tx<
       { computed_score: string | null; override_score: string | null }[]
     >`
@@ -819,7 +896,13 @@ export async function createGradeItem(input: {
   const sql = getDb();
   let gradeItemId: string;
   try {
-    gradeItemId = await sql.begin(async (tx) => {
+    const outcome = await sql.begin<
+      | { ok: true; gradeItemId: string }
+      | { ok: false; status: number; error: string }
+    >(async (tx) => {
+      const unlocked = await assertGradeUnlocked(tx, input.teachingClassId);
+      if (!unlocked.ok) return unlocked;
+
       const inserted = await tx<{ id: string }[]>`
         insert into grade_items (teaching_class_id, name, max_score, weight)
         values (
@@ -829,8 +912,10 @@ export async function createGradeItem(input: {
         returning id
       `;
       await recomputeOveralls(tx, input.teachingClassId);
-      return inserted[0]!.id;
+      return { ok: true as const, gradeItemId: inserted[0]!.id };
     });
+    if (!outcome.ok) return outcome;
+    gradeItemId = outcome.gradeItemId;
   } catch (error) {
     if (isUniqueViolation(error)) {
       return {
@@ -851,4 +936,308 @@ export async function createGradeItem(input: {
     return { ok: false, status: 500, error: "成绩项创建失败，请稍后再试。" };
   }
   return { ok: true, gradeItem, sheet };
+}
+
+export type PublishResult =
+  | {
+      ok: true;
+      publication: { id: string; version: number; publishedAt: string };
+      lock: GradeLock;
+      sheet: GradeSheet;
+    }
+  | { ok: false; status: number; error: string };
+
+/**
+ * 发布整个教学班：把当时的成绩项定义、每人每项得分与每人总评固化成快照，
+ * 并把教学班切到已发布（锁定）。发布前必须显式确认（confirmed === true），
+ * 避免误触后学生立刻看到半成品。
+ */
+export async function publishGrades(input: {
+  teachingClassId: string;
+  user: SessionUser;
+  confirmed: unknown;
+}): Promise<PublishResult> {
+  const access = await authorizeGradeAccess(input.teachingClassId, input.user);
+  if (!access.ok) return access;
+
+  if (input.confirmed !== true) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "发布后全体学生将立即看到本次成绩，且教学班会被锁定；请确认成绩无误后再发布。",
+    };
+  }
+
+  const sql = getDb();
+  const outcome = await sql.begin<
+    { ok: true } | { ok: false; status: number; error: string }
+  >(async (tx) => {
+    const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
+      select grade_state from teaching_classes
+      where id = ${input.teachingClassId}
+      for update
+    `;
+    if (lockRows.length === 0) {
+      return { ok: false, status: 404, error: "教学班不存在。" };
+    }
+    if (lockRows[0]!.grade_state === "published") {
+      return { ok: false, status: 409, error: LOCKED_PUBLISH_MESSAGE };
+    }
+
+    const itemRows = await tx<ItemRow[]>`
+      select id, name, max_score::text as max_score, weight::text as weight
+      from grade_items
+      where teaching_class_id = ${input.teachingClassId}
+      order by created_at, id
+    `;
+    if (itemRows.length === 0) {
+      return { ok: false, status: 400, error: "还没有成绩项，无法发布。" };
+    }
+
+    const studentRows = await tx<
+      { id: string; student_number: string; name: string }[]
+    >`
+      select s.id, s.student_number, s.name
+      from teaching_class_students tcs
+      join students s on s.id = tcs.student_id
+      where tcs.teaching_class_id = ${input.teachingClassId}
+      order by s.student_number
+    `;
+    const scoreRows = await tx<
+      { student_id: string; grade_item_id: string; score: string }[]
+    >`
+      select sg.student_id, sg.grade_item_id, sg.score::text as score
+      from student_grades sg
+      join grade_items gi on gi.id = sg.grade_item_id
+      where gi.teaching_class_id = ${input.teachingClassId}
+    `;
+    const overallRows = await tx<
+      { student_id: string; override_score: string | null }[]
+    >`
+      select student_id, override_score::text as override_score
+      from grade_overalls
+      where teaching_class_id = ${input.teachingClassId}
+    `;
+
+    const calcItems: CalcItem[] = itemRows.map((row) => ({
+      id: row.id,
+      maxScaled: parseStoredDecimal(row.max_score) ?? 0,
+      weightScaled: parseStoredDecimal(row.weight) ?? 0,
+    }));
+    const roster = new Set(studentRows.map((row) => row.id));
+
+    const scoresByStudent = new Map<string, Map<string, number>>();
+    for (const row of scoreRows) {
+      if (!roster.has(row.student_id)) continue;
+      const score = parseStoredDecimal(row.score);
+      if (score === null) continue;
+      let byItem = scoresByStudent.get(row.student_id);
+      if (!byItem) {
+        byItem = new Map();
+        scoresByStudent.set(row.student_id, byItem);
+      }
+      byItem.set(row.grade_item_id, score);
+    }
+
+    const overrideByStudent = new Map(
+      overallRows.map((row) => [
+        row.student_id,
+        parseStoredDecimal(row.override_score),
+      ]),
+    );
+
+    const versionRows = await tx<{ next_version: number }[]>`
+      select coalesce(max(version), 0) + 1 as next_version
+      from grade_publications
+      where teaching_class_id = ${input.teachingClassId}
+    `;
+    const version = versionRows[0]!.next_version;
+
+    const publicationRows = await tx<{ id: string }[]>`
+      insert into grade_publications (
+        teaching_class_id, version, published_by
+      )
+      values (
+        ${input.teachingClassId}, ${version}, ${input.user.id}
+      )
+      returning id
+    `;
+    const publicationId = publicationRows[0]!.id;
+
+    for (const [position, item] of itemRows.entries()) {
+      await tx`
+        insert into grade_publication_items (
+          publication_id, grade_item_id, position, name, max_score, weight
+        )
+        values (
+          ${publicationId}, ${item.id}, ${position}, ${item.name},
+          ${item.max_score}, ${item.weight}
+        )
+      `;
+    }
+
+    for (const row of scoreRows) {
+      if (!roster.has(row.student_id)) continue;
+      await tx`
+        insert into grade_publication_scores (
+          publication_id, grade_item_id, student_id, score
+        )
+        values (
+          ${publicationId}, ${row.grade_item_id}, ${row.student_id},
+          ${row.score}
+        )
+      `;
+    }
+
+    for (const student of studentRows) {
+      const computed = computeOverallHundredths(
+        calcItems,
+        scoresByStudent.get(student.id) ?? new Map(),
+      );
+      const override = overrideByStudent.get(student.id) ?? null;
+      const finalScaled = override ?? computed.scaled;
+      const finalSource =
+        override !== null
+          ? "override"
+          : computed.scaled !== null
+            ? "computed"
+            : null;
+      const status = computed.scaled === null ? "incomplete" : "complete";
+
+      await tx`
+        insert into grade_publication_overalls (
+          publication_id, student_id, student_number, student_name,
+          computed_score, override_score, final_score, final_source, status
+        )
+        values (
+          ${publicationId}, ${student.id}, ${student.student_number},
+          ${student.name},
+          ${computed.scaled === null ? null : scaledToText(computed.scaled)},
+          ${override === null ? null : scaledToText(override)},
+          ${finalScaled === null ? null : scaledToText(finalScaled)},
+          ${finalSource}, ${status}
+        )
+      `;
+    }
+
+    await tx`
+      update teaching_classes
+      set grade_state = 'published', updated_at = now()
+      where id = ${input.teachingClassId}
+    `;
+    await insertGradeChangeLog(tx, {
+      teachingClassId: input.teachingClassId,
+      studentId: null,
+      gradeItemId: null,
+      target: "teaching_class",
+      action: "publish",
+      actorAccountId: input.user.id,
+      oldScaled: null,
+      newScaled: null,
+    });
+    return { ok: true };
+  });
+
+  if (!outcome.ok) return outcome;
+
+  const sheet = await getGradeSheet(input.teachingClassId);
+  if (!sheet || !sheet.lock.latestPublication) {
+    return { ok: false, status: 500, error: "发布失败，请稍后再试。" };
+  }
+  return {
+    ok: true,
+    publication: sheet.lock.latestPublication,
+    lock: sheet.lock,
+    sheet,
+  };
+}
+
+export type UnlockResult =
+  | { ok: true; lock: GradeLock; sheet: GradeSheet }
+  | { ok: false; status: number; error: string };
+
+/**
+ * 教务管理员解锁：必须写明理由，理由落入变更日志的 reason 字段。
+ * 解锁只把教学班切回草稿，已发布的快照原样保留，学生继续看到旧版本。
+ */
+export async function unlockGrades(input: {
+  teachingClassId: string;
+  user: SessionUser;
+  reason: unknown;
+}): Promise<UnlockResult> {
+  const teachingClass = await findTeachingClass(input.teachingClassId);
+  if (!teachingClass) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  if (input.user.role !== "administrator") {
+    return {
+      ok: false,
+      status: 403,
+      error: "只有教务管理员可以解锁成绩。",
+    };
+  }
+
+  if (typeof input.reason !== "string" || input.reason.trim().length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: "请填写解锁理由，解锁记录会保留理由。",
+    };
+  }
+  const reason = input.reason.trim();
+  if (reason.length > 500) {
+    return {
+      ok: false,
+      status: 400,
+      error: "解锁理由不能超过 500 个字符。",
+    };
+  }
+
+  const sql = getDb();
+  const outcome = await sql.begin<
+    { ok: true } | { ok: false; status: number; error: string }
+  >(async (tx) => {
+    const lockRows = await tx<{ grade_state: "draft" | "published" }[]>`
+      select grade_state from teaching_classes
+      where id = ${input.teachingClassId}
+      for update
+    `;
+    if (lockRows.length === 0) {
+      return { ok: false, status: 404, error: "教学班不存在。" };
+    }
+    if (lockRows[0]!.grade_state === "draft") {
+      return {
+        ok: false,
+        status: 409,
+        error: "该教学班当前未锁定，无需解锁。",
+      };
+    }
+
+    await tx`
+      update teaching_classes
+      set grade_state = 'draft', updated_at = now()
+      where id = ${input.teachingClassId}
+    `;
+    await insertGradeChangeLog(tx, {
+      teachingClassId: input.teachingClassId,
+      studentId: null,
+      gradeItemId: null,
+      target: "teaching_class",
+      action: "unlock",
+      actorAccountId: input.user.id,
+      oldScaled: null,
+      newScaled: null,
+      reason,
+    });
+    return { ok: true };
+  });
+
+  if (!outcome.ok) return outcome;
+
+  const sheet = await getGradeSheet(input.teachingClassId);
+  if (!sheet) {
+    return { ok: false, status: 404, error: "教学班不存在。" };
+  }
+  return { ok: true, lock: sheet.lock, sheet };
 }

@@ -60,6 +60,10 @@ export default async function AdminTeachingClassPage({
             <Link href={`/admin/teaching-classes/${id}/grades`}>
               录入成绩
             </Link>
+            {" · "}
+            <Link href={`/admin/grade-logs?teachingClassId=${id}`}>
+              变更日志
+            </Link>
           </p>
           <p>
             <Link href="/admin/courses">课程管理</Link>

@@ -43,6 +43,12 @@ export default async function TeacherGradeEntryPage({
             </Link>
             {" · "}
             <Link href="/teacher/teaching-classes">我的教学班</Link>
+            {" · "}
+            <Link
+              href={`/teacher/teaching-classes/${sheet.teachingClass.id}/grade-logs`}
+            >
+              变更日志
+            </Link>
           </p>
         </div>
         <LogoutButton />
@@ -53,6 +59,7 @@ export default async function TeacherGradeEntryPage({
         initialSheet={sheet}
         backHref={`/teacher/teaching-classes/${sheet.teachingClass.id}`}
         backLabel="返回教学班"
+        role="teacher"
       />
     </main>
   );

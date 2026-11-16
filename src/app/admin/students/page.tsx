@@ -135,6 +135,7 @@ export default async function StudentsPage({
                 <th>姓名</th>
                 <th>行政班</th>
                 <th>学籍状态</th>
+                <th>成绩日志</th>
                 <th>转班与状态</th>
               </tr>
             </thead>
@@ -145,6 +146,11 @@ export default async function StudentsPage({
                   <td>{student.name}</td>
                   <td>{student.administrativeClass.name}</td>
                   <td>{ENROLLMENT_STATUS_LABELS[student.enrollmentStatus]}</td>
+                  <td>
+                    <a href={`/admin/grade-logs?studentId=${student.id}`}>
+                      变更日志
+                    </a>
+                  </td>
                   <td>
                     <StudentAdjustForm
                       studentId={student.id}
