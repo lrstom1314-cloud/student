@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run && npm run test:ops",
     "test:ops": "node --test tests/ops/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "db:generate": "drizzle-kit generate && node scripts/strip-public-schema.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "account:create": "node scripts/create-account.mjs"
@@ -26,6 +28,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

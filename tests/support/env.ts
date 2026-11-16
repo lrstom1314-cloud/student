@@ -1,6 +1,10 @@
 import path from "node:path";
 
-export const ROOT = path.resolve(import.meta.dirname, "../..");
+/**
+ * 仓库根目录。npm scripts、Vitest 与 Playwright 都从仓库根目录运行；
+ * 这里用 cwd 而不是 import.meta，便于 Playwright 以 CommonJS 加载测试脚手架。
+ */
+export const ROOT = process.cwd();
 
 let loaded = false;
 
