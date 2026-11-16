@@ -8,7 +8,7 @@
 #   - 容器 healthcheck（scripts/backup-healthcheck.sh）转为 unhealthy。
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 3 * * *}
 BACKUP_DIR=${BACKUP_DIR:-/backups}
 CRONTAB_FILE=${CRONTAB_FILE:-/etc/crontabs/root}
