@@ -111,6 +111,14 @@ docker compose up -d --build
 默认保留 30 天，并复制到 `BACKUP_OFFSITE_HOST_DIR`。备份文件在 `./backups/`，
 失败会写进容器日志并让 `docker compose ps` 中的 backup 显示 unhealthy。
 恢复步骤与验证点见 [`docs/operations.md`](./docs/operations.md)。
+整份恢复演练已做成向导，在装有 Docker 的机器上跑一条命令即可：
+
+```sh
+bash scripts/wizard-restore-drill.sh
+```
+
+它会生成 `.env`、启动服务、引导造一份最小数据、立即备份、恢复到临时库并逐表比对行数，
+最后提示你把结果填进 `docs/operations.md` 的演练记录表。
 
 启动后访问：
 
