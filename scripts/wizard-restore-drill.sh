@@ -375,7 +375,23 @@ if [[ "$accounts" != "1" ]]; then
   warn "恢复后的库里找不到演练管理员账号。"
   exit 1
 fi
-note "账号、学生、成绩与日志行数全部一致。"
+
+students=$(docker compose exec -T db psql -U "${POSTGRES_USER:-student}" -d student_restore_check -tAc \
+  "select count(*) from students where student_number = '$DRILL_STUDENT_NUMBER';")
+if [[ "$students" != "1" ]]; then
+  warn "恢复后的库里找不到学号 $DRILL_STUDENT_NUMBER 的学生。"
+  exit 1
+fi
+
+overalls=$(docker compose exec -T db psql -U "${POSTGRES_USER:-student}" -d student_restore_check -tAc "
+  select count(*) from grade_publication_overalls po
+  join students s on s.id = po.student_id
+  where s.student_number = '$DRILL_STUDENT_NUMBER';")
+if [[ "${overalls:-0}" -lt 1 ]]; then
+  warn "恢复后的库里找不到该学生的已发布总评，成绩快照可能没备份到。"
+  exit 1
+fi
+note "账号、学生、已发布总评与日志行数全部对得上。"
 
 docker compose exec -T db psql -U "${POSTGRES_USER:-student}" -d postgres \
   -c 'DROP DATABASE student_restore_check;'
