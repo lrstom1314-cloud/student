@@ -30,6 +30,9 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 
+# 个人学习材料（讲义、参考文档、学习记录），不入库
+learning/
+
 # 系统文件
 .DS_Store
 *.log
