@@ -13,59 +13,39 @@ import {
   WEEKDAY_LABELS,
   weekLabel,
 } from "@/lib/timetable-labels";
-import { teachingWeekLabel } from "@/lib/teaching-week";
+import { teachingWeekLabel, type TeachingWeekState } from "@/lib/teaching-week";
 
 export const dynamic = "force-dynamic";
 
-function WeekScope({
-  startsOn,
-  inTeachingWeek,
-  teachingWeek,
-  computedWeek,
-  weekRange,
-}: {
-  startsOn: string | null;
-  inTeachingWeek: boolean;
-  teachingWeek: number | null;
-  computedWeek: number | null;
-  weekRange: { startWeek: number; endWeek: number } | null;
-}) {
-  if (startsOn === null) {
-    return (
-      <p className="hint" role="status">
-        本学期尚未设置开学日期，暂时无法标出本周是否需要上课；课表本身仍可正常查看。
-      </p>
-    );
+function WeekScope({ state }: { state: TeachingWeekState }) {
+  switch (state.kind) {
+    case "no_start_date":
+      return (
+        <p className="hint" role="status">
+          本学期尚未设置开学日期，暂时无法标出本周是否需要上课；课表本身仍可正常查看。
+        </p>
+      );
+    case "no_timetable":
+      return null;
+    case "in_week":
+      return (
+        <p className="notice" role="status">
+          {`本周是${teachingWeekLabel(state.week)}，下面标出每门课本周是否要上。`}
+        </p>
+      );
+    case "before_term":
+      return (
+        <p className="notice" role="status">
+          {`本学期尚未开学（开学日期 ${state.startsOn}），不在教学周内，本周无需按课表上课。`}
+        </p>
+      );
+    case "outside_range":
+      return (
+        <p className="notice" role="status">
+          {`当前是第 ${state.computedWeek} 周，本学期课表为第 ${state.startWeek}-${state.endWeek} 周，不在教学周内，本周无需按课表上课。`}
+        </p>
+      );
   }
-
-  if (inTeachingWeek && teachingWeek !== null) {
-    return (
-      <p className="notice" role="status">
-        {`本周是${teachingWeekLabel(teachingWeek)}，下面标出每门课本周是否要上。`}
-      </p>
-    );
-  }
-
-  const rangeText = weekRange
-    ? `本学期课表为第 ${weekRange.startWeek}-${weekRange.endWeek} 周`
-    : "本学期尚未排课";
-
-  if (computedWeek !== null && computedWeek < 1) {
-    return (
-      <p className="notice" role="status">
-        {`本学期尚未开学（开学日期 ${startsOn}），不在教学周内，本周无需按课表上课。`}
-      </p>
-    );
-  }
-
-  const weekText =
-    computedWeek === null ? "当前" : `当前是第 ${computedWeek} 周`;
-
-  return (
-    <p className="notice" role="status">
-      {`${weekText}，${rangeText}，不在教学周内，本周无需按课表上课。`}
-    </p>
-  );
 }
 
 function GradeCourseCard({ course }: { course: StudentGradeCourse }) {
@@ -197,13 +177,7 @@ export default async function StudentPage({
         <section>
           <h2>本周</h2>
           {timetable.weekRange === null ? null : (
-            <WeekScope
-              startsOn={timetable.startsOn}
-              inTeachingWeek={timetable.inTeachingWeek}
-              teachingWeek={timetable.teachingWeek}
-              computedWeek={timetable.computedWeek}
-              weekRange={timetable.weekRange}
-            />
+            <WeekScope state={timetable.weekState} />
           )}
 
           {timetable.weekRange === null ? (

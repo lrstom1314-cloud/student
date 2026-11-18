@@ -6,10 +6,8 @@ import { TimetableSection } from "@/components/timetable-section";
 import { requirePageUser } from "@/lib/auth";
 import { ENROLLMENT_STATUS_LABELS } from "@/lib/enrollment-status";
 import { isUuid } from "@/lib/http";
-import {
-  getTeachingClassDetail,
-  isTeachingClassTeacher,
-} from "@/lib/teaching-classes";
+import { authorizeTeachingClass } from "@/lib/teaching-class-access";
+import { getTeachingClassDetail } from "@/lib/teaching-classes";
 import { getTimetable } from "@/lib/timetable";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +24,7 @@ export default async function TeacherTeachingClassPage({
 
   if (!isUuid(id)) notFound();
   // 教师只能进入自己任教的教学班，其他教学班由服务端渲染 403。
-  if (!(await isTeachingClassTeacher(id, user.id))) forbidden();
+  if (!(await authorizeTeachingClass(id, user, "teach")).ok) forbidden();
 
   const teachingClass = await getTeachingClassDetail(id);
   if (!teachingClass) notFound();

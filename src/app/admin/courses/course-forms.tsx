@@ -2,27 +2,7 @@
 
 import { useState } from "react";
 
-type ApiResult = { error?: string };
-
-async function postJson(route: string, body: unknown): Promise<Response> {
-  return fetch(route, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function failureMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = (await response.json()) as ApiResult;
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { submitJson } from "@/lib/api-client";
 
 /**
  * 学分与课时二选一（也可同时填写）：空的输入不提交，
@@ -42,23 +22,21 @@ export function CreateCourseForm() {
     const hours = String(data.get("hours") ?? "").trim();
     const description = String(data.get("description") ?? "").trim();
 
-    try {
-      const response = await postJson("/api/admin/courses", {
+    const result = await submitJson<unknown>("/api/admin/courses", {
+      body: {
         name: data.get("name"),
         ...(credits.length > 0 ? { credits } : {}),
         ...(hours.length > 0 ? { hours } : {}),
         ...(description.length > 0 ? { description } : {}),
-      });
-      if (!response.ok) {
-        setError(await failureMessage(response, "创建课程失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+      },
+      fallback: "创建课程失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (

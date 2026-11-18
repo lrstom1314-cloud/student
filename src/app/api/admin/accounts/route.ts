@@ -1,15 +1,7 @@
-import { NextResponse } from "next/server";
-
-import { createAccount } from "@/lib/accounts";
-import { requireApiUser } from "@/lib/auth";
 import type { AccountRole } from "@/db/schema";
-import {
-  errorResponse,
-  internalError,
-  isUniqueViolation,
-  NO_STORE,
-  readJsonObject,
-} from "@/lib/http";
+import { createAccount } from "@/lib/accounts";
+import { handleApi, jsonOk } from "@/lib/api-route";
+import { errorResponse, isUniqueViolation } from "@/lib/http";
 import {
   displayNameProblem,
   hashPassword,
@@ -28,45 +20,44 @@ function isRole(value: unknown): value is AccountRole {
 /**
  * 教务管理员创建账号。初始密码由管理员设置，账号首次登录必须改密。
  */
-export async function POST(request: Request) {
-  const guard = await requireApiUser({ roles: ["administrator"] });
-  if (!guard.ok) return guard.response;
+export const POST = handleApi(
+  { roles: ["administrator"], idParam: null, body: "optional" },
+  async ({ body }) => {
+    const loginName =
+      typeof body?.loginName === "string" ? body.loginName.trim() : "";
+    const displayName =
+      typeof body?.displayName === "string" ? body.displayName.trim() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    const role = body?.role;
 
-  const body = await readJsonObject(request);
-  const loginName =
-    typeof body?.loginName === "string" ? body.loginName.trim() : "";
-  const displayName =
-    typeof body?.displayName === "string" ? body.displayName.trim() : "";
-  const password = typeof body?.password === "string" ? body.password : "";
-  const role = body?.role;
+    const loginNameError = loginNameProblem(loginName);
+    if (loginNameError) return errorResponse(loginNameError, 400);
 
-  const loginNameError = loginNameProblem(loginName);
-  if (loginNameError) return errorResponse(loginNameError, 400);
+    const displayNameError = displayNameProblem(displayName);
+    if (displayNameError) return errorResponse(displayNameError, 400);
 
-  const displayNameError = displayNameProblem(displayName);
-  if (displayNameError) return errorResponse(displayNameError, 400);
-
-  if (!isRole(role)) {
-    return errorResponse("请选择有效的角色。", 400);
-  }
-
-  const passwordError = passwordProblem(password);
-  if (passwordError) return errorResponse(passwordError, 400);
-
-  try {
-    const account = await createAccount({
-      loginName,
-      displayName,
-      role,
-      passwordHash: await hashPassword(password),
-      mustChangePassword: true,
-    });
-
-    return NextResponse.json({ account }, { status: 201, headers: NO_STORE });
-  } catch (error) {
-    if (isUniqueViolation(error)) {
-      return errorResponse("登录名已被使用，请换一个。", 409);
+    if (!isRole(role)) {
+      return errorResponse("请选择有效的角色。", 400);
     }
-    return internalError(error);
-  }
-}
+
+    const passwordError = passwordProblem(password);
+    if (passwordError) return errorResponse(passwordError, 400);
+
+    try {
+      const account = await createAccount({
+        loginName,
+        displayName,
+        role,
+        passwordHash: await hashPassword(password),
+        mustChangePassword: true,
+      });
+
+      return jsonOk({ account }, 201);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return errorResponse("登录名已被使用，请换一个。", 409);
+      }
+      throw error;
+    }
+  },
+);

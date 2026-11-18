@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
+
 export function ChangePasswordForm({
   next,
   forced,
@@ -26,32 +28,30 @@ export function ChangePasswordForm({
     }
 
     setPending(true);
-    try {
-      const response = await fetch("/api/auth/password", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+    const result = await submitJson<{ redirectTo?: string }>(
+      "/api/auth/password",
+      {
+        body: {
           currentPassword: data.get("currentPassword"),
           newPassword,
           next,
-        }),
-      });
-      const body = (await response.json()) as {
-        error?: string;
-        redirectTo?: string;
-      };
+        },
+        fallback: "修改失败，请稍后再试。",
+      },
+    );
 
-      if (!response.ok || !body.redirectTo) {
-        setError(body.error ?? "修改失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-
-      window.location.assign(body.redirectTo);
-    } catch {
-      setError("网络异常，请稍后再试。");
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    if (!result.data.redirectTo) {
+      setError("修改失败，请稍后再试。");
+      setPending(false);
+      return;
+    }
+
+    window.location.assign(result.data.redirectTo);
   }
 
   return (

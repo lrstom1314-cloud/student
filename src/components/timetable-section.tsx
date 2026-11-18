@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
 import type { TimetableConflict, TimetableEntry } from "@/lib/timetable";
 import {
   MAX_PERIOD,
@@ -16,26 +17,12 @@ import {
   weekLabel,
 } from "@/lib/timetable-labels";
 
-type ApiError = { error?: string; conflicts?: TimetableConflict[] };
-
 type PendingConflict = {
   entryId: string | null;
   body: Record<string, unknown>;
   message: string;
   conflicts: TimetableConflict[];
 };
-
-async function failureMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = (await response.json()) as ApiError;
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function EntryFields({ entry }: { entry?: TimetableEntry }) {
   return (
@@ -172,50 +159,39 @@ export function TimetableSection({
       ? `/api/teaching-classes/${teachingClassId}/timetable/${entryId}`
       : `/api/teaching-classes/${teachingClassId}/timetable`;
 
-    try {
-      const response = await fetch(route, {
-        method: entryId ? "PATCH" : "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          ...body,
-          ...(acknowledgeConflicts ? { acknowledgeConflicts: true } : {}),
-        }),
-      });
+    const result = await submitJson<unknown>(route, {
+      method: entryId ? "PATCH" : "POST",
+      body: {
+        ...body,
+        ...(acknowledgeConflicts ? { acknowledgeConflicts: true } : {}),
+      },
+      fallback: "保存课表失败，请稍后再试。",
+    });
 
-      if (response.status === 409) {
-        const payload = (await response
-          .json()
-          .catch(() => ({}))) as ApiError;
+    if (!result.ok) {
+      if (result.status === 409) {
+        const conflicts = result.body?.conflicts;
         setPendingConflict({
           entryId,
           body,
-          message:
-            typeof payload.error === "string"
-              ? payload.error
-              : "存在课表时间冲突，尚未保存。",
-          conflicts: Array.isArray(payload.conflicts)
-            ? payload.conflicts
+          message: result.message,
+          conflicts: Array.isArray(conflicts)
+            ? (conflicts as TimetableConflict[])
             : [],
         });
         setBusy(false);
         return;
       }
-
-      if (!response.ok) {
-        setError(await failureMessage(response, "保存课表失败，请稍后再试。"));
-        setBusy(false);
-        return;
-      }
-
+      setError(result.message);
       setBusy(false);
-      setEditingId(null);
-      setShowAdd(false);
-      setPendingConflict(null);
-      reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setBusy(false);
+      return;
     }
+
+    setBusy(false);
+    setEditingId(null);
+    setShowAdd(false);
+    setPendingConflict(null);
+    reload();
   }
 
   async function handleSave(
@@ -250,21 +226,16 @@ export function TimetableSection({
   async function remove(entryId: string) {
     setError(null);
     setBusy(true);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/timetable/${entryId}`,
-        { method: "DELETE" },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "删除课表失败，请稍后再试。"));
-        setBusy(false);
-        return;
-      }
-      reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      `/api/teaching-classes/${teachingClassId}/timetable/${entryId}`,
+      { method: "DELETE", fallback: "删除课表失败，请稍后再试。" },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setBusy(false);
+      return;
     }
+    reload();
   }
 
   const editing = entries.find((entry) => entry.id === editingId) ?? null;

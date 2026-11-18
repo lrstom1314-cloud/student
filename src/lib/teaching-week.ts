@@ -101,6 +101,62 @@ export function scheduledInWeek(
   }
 }
 
+/**
+ * 「本周」对一个学生的完整解释：是否开学、第几周、是否落在他的课表周次内。
+ * 页面只渲染这个状态，不再自己拼五个重叠字段。
+ */
+export type TeachingWeekState =
+  | { kind: "no_start_date" }
+  | { kind: "before_term"; startsOn: IsoDate; computedWeek: number }
+  | { kind: "no_timetable"; computedWeek: number | null }
+  | {
+      kind: "in_week";
+      computedWeek: number;
+      week: number;
+      parity: "odd" | "even";
+    }
+  | {
+      kind: "outside_range";
+      computedWeek: number;
+      startWeek: number;
+      endWeek: number;
+    };
+
+export function teachingWeekState(input: {
+  startsOn: IsoDate | null;
+  today?: IsoDate;
+  /** 该学生自己的课表覆盖的周次范围；没有课表时为 null。 */
+  weekRange: { startWeek: number; endWeek: number } | null;
+}): TeachingWeekState {
+  if (input.startsOn === null) return { kind: "no_start_date" };
+  const computedWeek = teachingWeekOf(input.startsOn, input.today);
+  if (computedWeek === null) return { kind: "no_start_date" };
+
+  if (input.weekRange === null) {
+    return { kind: "no_timetable", computedWeek };
+  }
+  if (computedWeek < 1) {
+    return { kind: "before_term", startsOn: input.startsOn, computedWeek };
+  }
+  if (
+    computedWeek < input.weekRange.startWeek ||
+    computedWeek > input.weekRange.endWeek
+  ) {
+    return {
+      kind: "outside_range",
+      computedWeek,
+      startWeek: input.weekRange.startWeek,
+      endWeek: input.weekRange.endWeek,
+    };
+  }
+  return {
+    kind: "in_week",
+    computedWeek,
+    week: computedWeek,
+    parity: computedWeek % 2 === 1 ? "odd" : "even",
+  };
+}
+
 /** 「第 3 周（单周）」这样的描述。 */
 export function teachingWeekLabel(week: number): string {
   return `第 ${week} 周（${week % 2 === 1 ? "单周" : "双周"}）`;

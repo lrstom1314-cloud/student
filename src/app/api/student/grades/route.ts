@@ -1,7 +1,5 @@
-import { NextResponse } from "next/server";
-
-import { requireApiUser } from "@/lib/auth";
-import { errorResponse, internalError, isUuid, NO_STORE } from "@/lib/http";
+import { handleApi, jsonOk } from "@/lib/api-route";
+import { errorResponse, isUuid } from "@/lib/http";
 import {
   getStudentGradeReport,
   resolveStudentGradeTerm,
@@ -14,17 +12,15 @@ export const dynamic = "force-dynamic";
  * 未来学期、不存在的学期与非法参数一律拒绝；学生身份始终来自会话，
  * 不接受用参数切换到他人（指定他人返回 403）。
  */
-export async function GET(request: Request) {
-  const guard = await requireApiUser({ roles: ["student"] });
-  if (!guard.ok) return guard.response;
+export const GET = handleApi(
+  { roles: ["student"], idParam: null },
+  async ({ request, user }) => {
+    const params = new URL(request.url).searchParams;
 
-  const params = new URL(request.url).searchParams;
-
-  try {
     const term = await resolveStudentGradeTerm(params.get("termId"));
     if (!term.ok) return errorResponse(term.error, term.status);
 
-    const report = await getStudentGradeReport(guard.user.id, term.term);
+    const report = await getStudentGradeReport(user.id, term.term);
 
     const requestedStudentId = params.get("studentId");
     if (requestedStudentId !== null) {
@@ -36,8 +32,6 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json(report, { headers: NO_STORE });
-  } catch (error) {
-    return internalError(error);
-  }
-}
+    return jsonOk(report);
+  },
+);

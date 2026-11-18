@@ -3,37 +3,12 @@
 import { useState } from "react";
 
 import type { AdministrativeClassSummary } from "@/lib/administrative-classes";
+import { submitJson } from "@/lib/api-client";
 import {
   ENROLLMENT_STATUSES,
   ENROLLMENT_STATUS_LABELS,
   type EnrollmentStatus,
 } from "@/lib/enrollment-status";
-
-type ApiResult = { error?: string };
-
-async function postJson(
-  method: "POST" | "PATCH",
-  route: string,
-  body: unknown,
-): Promise<Response> {
-  return fetch(route, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function failureMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = (await response.json()) as ApiResult;
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export function CreateAdministrativeClassForm() {
   const [error, setError] = useState<string | null>(null);
@@ -45,22 +20,19 @@ export function CreateAdministrativeClassForm() {
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson(
-        "POST",
-        "/api/admin/administrative-classes",
-        { name: data.get("name") },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "创建失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      "/api/admin/administrative-classes",
+      {
+        body: { name: data.get("name") },
+        fallback: "创建失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -95,22 +67,20 @@ export function RenameAdministrativeClassForm({
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson(
-        "PATCH",
-        `/api/admin/administrative-classes/${administrativeClass.id}`,
-        { name: data.get("name") },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "重命名失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      `/api/admin/administrative-classes/${administrativeClass.id}`,
+      {
+        method: "PATCH",
+        body: { name: data.get("name") },
+        fallback: "重命名失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -148,24 +118,22 @@ export function CreateStudentForm({
 
     const form = event.currentTarget;
     const data = new FormData(form);
-    try {
-      const response = await postJson("POST", "/api/admin/students", {
+    const result = await submitJson<unknown>("/api/admin/students", {
+      body: {
         studentNumber: data.get("studentNumber"),
         name: data.get("name"),
         administrativeClassId: data.get("administrativeClassId"),
         enrollmentStatus: data.get("enrollmentStatus"),
         initialPassword: data.get("initialPassword"),
-      });
-      if (!response.ok) {
-        setError(await failureMessage(response, "新建学生失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+      },
+      fallback: "新建学生失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -245,27 +213,25 @@ export function StudentAdjustForm({
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson(
-        "PATCH",
-        `/api/admin/students/${studentId}`,
-        {
+    const result = await submitJson<unknown>(
+      `/api/admin/students/${studentId}`,
+      {
+        method: "PATCH",
+        body: {
           administrativeClassId: data.get("administrativeClassId"),
           enrollmentStatus: data.get("enrollmentStatus"),
         },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "保存失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      setNotice("已保存");
+        fallback: "保存失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+    setNotice("已保存");
+    setPending(false);
+    window.location.reload();
   }
 
   return (

@@ -6,10 +6,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
 import { listGradeChangeLogsByTeachingClass } from "@/lib/grade-logs";
 import { isUuid } from "@/lib/http";
-import {
-  findTeachingClass,
-  isTeachingClassTeacher,
-} from "@/lib/teaching-classes";
+import { authorizeTeachingClass } from "@/lib/teaching-class-access";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +23,10 @@ export default async function TeacherGradeLogsPage({
   );
 
   if (!isUuid(id)) notFound();
-  if (!(await isTeachingClassTeacher(id, user.id))) forbidden();
+  const access = await authorizeTeachingClass(id, user, "teach");
+  if (!access.ok) forbidden();
 
-  const teachingClass = await findTeachingClass(id);
-  if (!teachingClass) notFound();
+  const teachingClass = access.teachingClass;
 
   const logs = await listGradeChangeLogsByTeachingClass(id);
 

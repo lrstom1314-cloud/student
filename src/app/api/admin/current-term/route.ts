@@ -1,13 +1,5 @@
-import { NextResponse } from "next/server";
-
-import { requireApiUser } from "@/lib/auth";
-import {
-  errorResponse,
-  internalError,
-  isUuid,
-  NO_STORE,
-  readJsonObject,
-} from "@/lib/http";
+import { handleApi, jsonOk } from "@/lib/api-route";
+import { errorResponse, isUuid } from "@/lib/http";
 import { getCurrentTerm, getTermById, setCurrentTerm } from "@/lib/terms";
 
 export const dynamic = "force-dynamic";
@@ -18,18 +10,15 @@ export const dynamic = "force-dynamic";
  * 这是会影响所有人的切换，接口要求显式 confirmed=true：
  * 未确认时返回 409 与可展示给教务管理员的确认文案，前端据此弹出确认。
  */
-export async function POST(request: Request) {
-  const guard = await requireApiUser({ roles: ["administrator"] });
-  if (!guard.ok) return guard.response;
+export const POST = handleApi(
+  { roles: ["administrator"], idParam: null, body: "optional" },
+  async ({ body }) => {
+    const termId = body?.termId;
 
-  const body = await readJsonObject(request);
-  const termId = body?.termId;
+    if (!isUuid(termId)) {
+      return errorResponse("请选择要设为当前学期的学期。", 400);
+    }
 
-  if (!isUuid(termId)) {
-    return errorResponse("请选择要设为当前学期的学期。", 400);
-  }
-
-  try {
     const target = await getTermById(termId);
     if (!target) {
       return errorResponse("学期不存在，请刷新页面后重试。", 404);
@@ -37,7 +26,7 @@ export async function POST(request: Request) {
 
     const current = await getCurrentTerm();
     if (body?.confirmed !== true) {
-      return NextResponse.json(
+      return jsonOk(
         {
           error: current
             ? `切换当前学期会改变所有人的默认视图：从「${current.label}」切换为「${target.label}」。请确认后再提交。`
@@ -46,7 +35,7 @@ export async function POST(request: Request) {
           currentTerm: current,
           targetTerm: target,
         },
-        { status: 409, headers: NO_STORE },
+        409,
       );
     }
 
@@ -55,11 +44,6 @@ export async function POST(request: Request) {
       return errorResponse("学期不存在，请刷新页面后重试。", 404);
     }
 
-    return NextResponse.json(
-      { currentTerm: updated },
-      { headers: NO_STORE },
-    );
-  } catch (error) {
-    return internalError(error);
-  }
-}
+    return jsonOk({ currentTerm: updated });
+  },
+);

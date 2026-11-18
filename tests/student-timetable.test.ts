@@ -58,6 +58,18 @@ type StudentTimetableJson = {
   teachingWeek: number | null;
   inTeachingWeek: boolean;
   weekRange: { startWeek: number; endWeek: number } | null;
+  studentWeekRange: { startWeek: number; endWeek: number } | null;
+  weekState:
+    | { kind: "no_start_date" }
+    | { kind: "before_term"; startsOn: string; computedWeek: number }
+    | { kind: "no_timetable"; computedWeek: number | null }
+    | { kind: "in_week"; computedWeek: number; week: number; parity: "odd" | "even" }
+    | {
+        kind: "outside_range";
+        computedWeek: number;
+        startWeek: number;
+        endWeek: number;
+      };
   entries: EntryJson[];
 };
 
@@ -656,6 +668,12 @@ describe("学生端首屏：我的课表", () => {
     expect(timetable.computedWeek).toBe(2);
     expect(timetable.teachingWeek).toBe(2);
     expect(timetable.inTeachingWeek).toBe(true);
+    expect(timetable.weekState).toMatchObject({
+      kind: "in_week",
+      week: 2,
+      parity: "even",
+    });
+    expect(timetable.studentWeekRange).toEqual({ startWeek: 1, endWeek: 16 });
 
     expect(entryOf(timetable, "实验楼 C303").scheduledThisWeek).toBe(false);
     expect(entryOf(timetable, "实验楼 C304").scheduledThisWeek).toBe(true);
@@ -709,6 +727,10 @@ describe("学生端首屏：我的课表", () => {
     expect(outside.computedWeek).toBe(29);
     expect(outside.inTeachingWeek).toBe(false);
     expect(outside.teachingWeek).toBeNull();
+    expect(outside.weekState).toMatchObject({
+      kind: "outside_range",
+      computedWeek: 29,
+    });
     expect(
       outside.entries.every((entry) => entry.scheduledThisWeek === null),
     ).toBe(true);
@@ -725,6 +747,10 @@ describe("学生端首屏：我的课表", () => {
     expect(future.computedWeek).toBe(0);
     expect(future.inTeachingWeek).toBe(false);
     expect(future.teachingWeek).toBeNull();
+    expect(future.weekState).toMatchObject({
+      kind: "before_term",
+      computedWeek: 0,
+    });
     const futureHtml = await (await page("/student", studentACookie)).text();
     expect(futureHtml).toContain("尚未开学");
     expect(futureHtml).toContain("不在教学周内");
@@ -749,6 +775,7 @@ describe("学生端首屏：我的课表", () => {
     expect(timetable.computedWeek).toBeNull();
     expect(timetable.teachingWeek).toBeNull();
     expect(timetable.inTeachingWeek).toBe(false);
+    expect(timetable.weekState).toEqual({ kind: "no_start_date" });
     expect(timetable.entries).toHaveLength(4);
     expect(
       timetable.entries.every((entry) => entry.scheduledThisWeek === null),

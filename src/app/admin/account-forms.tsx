@@ -2,15 +2,7 @@
 
 import { useState } from "react";
 
-type ApiResult = { error?: string };
-
-async function postJson(route: string, body: unknown): Promise<Response> {
-  return fetch(route, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
+import { submitJson } from "@/lib/api-client";
 
 export function CreateAccountForm() {
   const [error, setError] = useState<string | null>(null);
@@ -24,24 +16,21 @@ export function CreateAccountForm() {
     const form = event.currentTarget;
     const data = new FormData(form);
 
-    try {
-      const response = await postJson("/api/admin/accounts", {
+    const result = await submitJson<unknown>("/api/admin/accounts", {
+      body: {
         loginName: data.get("loginName"),
         displayName: data.get("displayName"),
         role: data.get("role"),
         password: data.get("password"),
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "创建失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+      },
+      fallback: "创建失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -104,25 +93,22 @@ export function ResetPasswordForm({
     const form = event.currentTarget;
     const data = new FormData(form);
 
-    try {
-      const response = await postJson(
-        `/api/admin/accounts/${accountId}/reset-password`,
-        { newPassword: data.get("newPassword") },
-      );
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "重置失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-
-      form.reset();
-      setNotice(`${loginName} 的密码已重置，对方下次登录需修改密码。`);
+    const result = await submitJson<unknown>(
+      `/api/admin/accounts/${accountId}/reset-password`,
+      {
+        body: { newPassword: data.get("newPassword") },
+        fallback: "重置失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+
+    form.reset();
+    setNotice(`${loginName} 的密码已重置，对方下次登录需修改密码。`);
+    setPending(false);
   }
 
   return (
@@ -159,22 +145,20 @@ export function DisabledToggle({
 
   async function toggle() {
     setPending(true);
-    try {
-      const response = await fetch(`/api/admin/accounts/${accountId}`, {
+    const result = await submitJson<unknown>(
+      `/api/admin/accounts/${accountId}`,
+      {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ disabled: !disabled }),
-      });
-      if (!response.ok) {
-        window.alert("操作失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      window.alert("网络异常，请稍后再试。");
+        body: { disabled: !disabled },
+        fallback: "操作失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      window.alert(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (

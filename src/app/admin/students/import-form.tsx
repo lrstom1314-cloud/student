@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { submitForm } from "@/lib/api-client";
+
 type ImportRow = {
   line: number;
   studentNumber: string;
@@ -66,33 +68,21 @@ export function StudentImportForm() {
     const form = event.currentTarget;
     const data = new FormData(form);
 
-    try {
-      const response = await fetch("/api/admin/students/import", {
-        method: "POST",
-        body: data,
-      });
-
-      if (!response.ok) {
-        let message = "导入失败，请稍后再试。";
-        try {
-          const body = (await response.json()) as { error?: string };
-          message = body.error ?? message;
-        } catch {
-          // 保留兜底文案。
-        }
-        setError(message);
-        setPending(false);
-        return;
-      }
-
-      setResult((await response.json()) as ImportResult);
+    const submitted = await submitForm<ImportResult>(
+      "/api/admin/students/import",
+      data,
+      { fallback: "导入失败，请稍后再试。" },
+    );
+    if (!submitted.ok) {
+      setError(submitted.message);
       setPending(false);
-      // 保留本组件的导入结果（含一次性密码），同时刷新服务端渲染的名单。
-      router.refresh();
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+
+    setResult(submitted.data);
+    setPending(false);
+    // 保留本组件的导入结果（含一次性密码），同时刷新服务端渲染的名单。
+    router.refresh();
   }
 
   function downloadResult() {

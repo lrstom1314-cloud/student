@@ -2,29 +2,9 @@
 
 import { useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
+
 type Option = { id: string; label: string };
-
-type ApiResult = { error?: string };
-
-async function postJson(route: string, body: unknown): Promise<Response> {
-  return fetch(route, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function failureMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = (await response.json()) as ApiResult;
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export function CreateTeachingClassForm({
   terms,
@@ -48,27 +28,24 @@ export function CreateTeachingClassForm({
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson("/api/admin/teaching-classes", {
+    const result = await submitJson<{
+      teachingClass: { id: string };
+    }>("/api/admin/teaching-classes", {
+      body: {
         termId: data.get("termId"),
         courseId: data.get("courseId"),
         teacherAccountId: data.get("teacherAccountId"),
         displayName: data.get("displayName"),
         administrativeClassId: data.get("administrativeClassId") || undefined,
-      });
-      if (!response.ok) {
-        setError(await failureMessage(response, "开设教学班失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      const body = (await response.json()) as {
-        teachingClass: { id: string };
-      };
-      window.location.href = `/admin/teaching-classes/${body.teachingClass.id}`;
-    } catch {
-      setError("网络异常，请稍后再试。");
+      },
+      fallback: "开设教学班失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.href = `/admin/teaching-classes/${result.data.teachingClass.id}`;
   }
 
   return (
@@ -155,21 +132,19 @@ export function AddStudentForm({
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson(
-        `/api/admin/teaching-classes/${teachingClassId}/students`,
-        { studentId: data.get("studentId") },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "加入失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      `/api/admin/teaching-classes/${teachingClassId}/students`,
+      {
+        body: { studentId: data.get("studentId") },
+        fallback: "加入失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -215,21 +190,19 @@ export function EnrollAdministrativeClassForm({
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await postJson(
-        `/api/admin/teaching-classes/${teachingClassId}/enroll-administrative-class`,
-        { administrativeClassId: data.get("administrativeClassId") },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "整班加入失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      `/api/admin/teaching-classes/${teachingClassId}/enroll-administrative-class`,
+      {
+        body: { administrativeClassId: data.get("administrativeClassId") },
+        fallback: "整班加入失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -274,21 +247,16 @@ export function RemoveStudentButton({
   async function onClick() {
     setError(null);
     setPending(true);
-    try {
-      const response = await fetch(
-        `/api/admin/teaching-classes/${teachingClassId}/students/${studentId}`,
-        { method: "DELETE" },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "移出失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(
+      `/api/admin/teaching-classes/${teachingClassId}/students/${studentId}`,
+      { method: "DELETE", fallback: "移出失败，请稍后再试。" },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (

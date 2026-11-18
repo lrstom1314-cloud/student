@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
+
 export function LoginForm({ next }: { next: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -12,32 +14,30 @@ export function LoginForm({ next }: { next: string }) {
     setPending(true);
 
     const data = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+    const result = await submitJson<{ redirectTo?: string }>(
+      "/api/auth/login",
+      {
+        body: {
           loginName: data.get("loginName"),
           password: data.get("password"),
           next,
-        }),
-      });
-      const body = (await response.json()) as {
-        error?: string;
-        redirectTo?: string;
-      };
+        },
+        fallback: "登录失败，请稍后再试。",
+      },
+    );
 
-      if (!response.ok || !body.redirectTo) {
-        setError(body.error ?? "登录失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-
-      window.location.assign(body.redirectTo);
-    } catch {
-      setError("网络异常，请稍后再试。");
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    if (!result.data.redirectTo) {
+      setError("登录失败，请稍后再试。");
+      setPending(false);
+      return;
+    }
+
+    window.location.assign(result.data.redirectTo);
   }
 
   return (

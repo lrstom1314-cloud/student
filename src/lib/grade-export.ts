@@ -1,10 +1,12 @@
 import type { SessionUser } from "@/lib/auth";
 import { getDb } from "@/db";
+import { getGradeSheet, type GradeSheet } from "@/lib/grades";
 import {
-  authorizeGradeAccess,
-  getGradeSheet,
-  type GradeSheet,
-} from "@/lib/grades";
+  loadLatestPublication,
+  loadPublicationTable,
+  type PublicationSummary,
+} from "@/lib/grade-publications";
+import { authorizeTeachingClass } from "@/lib/teaching-class-access";
 import type { TeachingClassSummary } from "@/lib/teaching-classes";
 
 /**
@@ -24,23 +26,6 @@ const UNLOCKED_FILENAME_SUFFIX = "（解锁中·内容为上次发布）";
 
 /** 缺考/未录入在导出里显式写成「未录入」，绝不折算成 0 分。 */
 const MISSING = "未录入";
-
-type PublicationRow = { id: string; version: number; published_at: Date };
-
-type PublicationItemRow = { grade_item_id: string; name: string };
-
-type PublicationOverallRow = {
-  student_id: string;
-  student_number: string;
-  student_name: string;
-  final_score: string | null;
-};
-
-type PublicationScoreRow = {
-  grade_item_id: string;
-  student_id: string;
-  score: string;
-};
 
 export type GradeExport = {
   filename: string;
@@ -142,53 +127,18 @@ function assembleCsv(input: {
 
 async function fromPublication(
   teachingClass: TeachingClassSummary,
-  publication: PublicationRow,
+  publication: PublicationSummary,
   unlocked: boolean,
 ): Promise<GradeExport> {
-  const sql = getDb();
-  const [itemRows, overallRows, scoreRows] = await Promise.all([
-    sql<PublicationItemRow[]>`
-      select grade_item_id, name
-      from grade_publication_items
-      where publication_id = ${publication.id}
-      order by position
-    `,
-    sql<PublicationOverallRow[]>`
-      select student_id, student_number, student_name,
-        final_score::text as final_score
-      from grade_publication_overalls
-      where publication_id = ${publication.id}
-      order by student_number, student_id
-    `,
-    sql<PublicationScoreRow[]>`
-      select grade_item_id, student_id, score::text as score
-      from grade_publication_scores
-      where publication_id = ${publication.id}
-    `,
-  ]);
-
-  const scoresByStudent = new Map<string, Map<string, string | null>>();
-  for (const row of scoreRows) {
-    let byItem = scoresByStudent.get(row.student_id);
-    if (!byItem) {
-      byItem = new Map();
-      scoresByStudent.set(row.student_id, byItem);
-    }
-    byItem.set(row.grade_item_id, row.score);
-  }
-
-  const items = itemRows.map((row) => ({
-    id: row.grade_item_id,
-    name: row.name,
-  }));
+  const table = await loadPublicationTable(getDb(), publication.id);
   const rows = buildRows(
-    items,
-    overallRows.map((row) => ({
-      id: row.student_id,
-      studentNumber: row.student_number,
-      name: row.student_name,
-      scores: scoresByStudent.get(row.student_id) ?? new Map(),
-      overall: row.final_score,
+    table.items,
+    table.students.map((student) => ({
+      id: student.id,
+      studentNumber: student.studentNumber,
+      name: student.name,
+      scores: student.scores,
+      overall: student.finalScore,
     })),
   );
 
@@ -199,7 +149,7 @@ async function fromPublication(
     )}.csv`,
     content: assembleCsv({
       notice: unlocked ? UNLOCKED_NOTICE : null,
-      items,
+      items: table.items,
       rows,
     }),
     published: true,
@@ -245,23 +195,16 @@ export async function buildGradeExport(
   teachingClassId: string,
   user: SessionUser,
 ): Promise<GradeExportResult> {
-  const access = await authorizeGradeAccess(teachingClassId, user);
+  const access = await authorizeTeachingClass(teachingClassId, user, "grades");
   if (!access.ok) return access;
 
   const sql = getDb();
-  const [publicationRows, stateRows] = await Promise.all([
-    sql<PublicationRow[]>`
-      select id, version, published_at
-      from grade_publications
-      where teaching_class_id = ${teachingClassId}
-      order by version desc
-      limit 1
-    `,
+  const [publication, stateRows] = await Promise.all([
+    loadLatestPublication(sql, teachingClassId),
     sql<{ grade_state: "draft" | "published" }[]>`
       select grade_state from teaching_classes where id = ${teachingClassId}
     `,
   ]);
-  const publication = publicationRows[0];
   if (publication) {
     // 有快照就永远导出快照；grade_state 为 draft 说明正处在解锁期间。
     return {

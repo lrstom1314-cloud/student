@@ -1,9 +1,6 @@
-import { requireApiUser } from "@/lib/auth";
-import {
-  buildGradeExport,
-  contentDisposition,
-} from "@/lib/grade-export";
-import { errorResponse, internalError, isUuid, NO_STORE } from "@/lib/http";
+import { handleApi } from "@/lib/api-route";
+import { buildGradeExport, contentDisposition } from "@/lib/grade-export";
+import { errorResponse, NO_STORE } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -13,18 +10,10 @@ export const dynamic = "force-dynamic";
  * 有发布快照时永远导出快照（解锁期间也一样），并在解锁期间标注
  * 「解锁中·内容为上次发布」；从未发布过的教学班才导出实时草稿并标注「未发布」。
  */
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ id: string }> },
-) {
-  const guard = await requireApiUser();
-  if (!guard.ok) return guard.response;
-
-  const { id } = await context.params;
-  if (!isUuid(id)) return errorResponse("教学班不存在。", 404);
-
-  try {
-    const result = await buildGradeExport(id, guard.user);
+export const GET = handleApi(
+  { idError: "教学班不存在。" },
+  async ({ id, user }) => {
+    const result = await buildGradeExport(id!, user);
     if (!result.ok) return errorResponse(result.error, result.status);
 
     const bytes = new TextEncoder().encode(result.export.content);
@@ -35,7 +24,5 @@ export async function GET(
         "content-disposition": contentDisposition(result.export.filename),
       },
     });
-  } catch (error) {
-    return internalError(error);
-  }
-}
+  },
+);

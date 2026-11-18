@@ -6,7 +6,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { requirePageUser } from "@/lib/auth";
 import { getGradeSheet } from "@/lib/grades";
 import { isUuid } from "@/lib/http";
-import { isTeachingClassTeacher } from "@/lib/teaching-classes";
+import { authorizeTeachingClass } from "@/lib/teaching-class-access";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export default async function TeacherGradeEntryPage({
   });
 
   if (!isUuid(id)) notFound();
-  if (!(await isTeachingClassTeacher(id, user.id))) forbidden();
+  if (!(await authorizeTeachingClass(id, user, "teach")).ok) forbidden();
 
   const sheet = await getGradeSheet(id);
   if (!sheet) notFound();

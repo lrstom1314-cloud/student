@@ -3,6 +3,8 @@ import type { WeekParity } from "@/db/schema";
 import {
   scheduledInWeek,
   teachingWeekOf,
+  teachingWeekState,
+  type TeachingWeekState,
 } from "@/lib/teaching-week";
 import { getCurrentTerm, type TermSummary } from "@/lib/terms";
 
@@ -41,6 +43,10 @@ export type StudentTimetable = {
   inTeachingWeek: boolean;
   /** 本学期全部课表条目的周次范围；没有排课时为 null。 */
   weekRange: { startWeek: number; endWeek: number } | null;
+  /** 该学生自己的课表覆盖的周次范围；没有课或未排课时为 null。 */
+  studentWeekRange: { startWeek: number; endWeek: number } | null;
+  /** 「本周」的完整解释，学生页只渲染这个状态。 */
+  weekState: TeachingWeekState;
   entries: StudentTimetableEntry[];
 };
 
@@ -80,6 +86,11 @@ function emptyTimetable(currentTerm: TermSummary | null): StudentTimetable {
     teachingWeek: null,
     inTeachingWeek: false,
     weekRange: null,
+    studentWeekRange: null,
+    weekState: teachingWeekState({
+      startsOn: currentTerm?.startsOn ?? null,
+      weekRange: null,
+    }),
     entries: [],
   };
 }
@@ -146,13 +157,20 @@ export async function getStudentTimetable(
     ? teachingWeekOf(currentTerm.startsOn)
     : null;
 
-  const inTeachingWeek =
-    computedWeek !== null &&
-    weekRange !== null &&
-    computedWeek >= weekRange.startWeek &&
-    computedWeek <= weekRange.endWeek;
-
-  const teachingWeek = inTeachingWeek ? computedWeek : null;
+  // 「本周」按这个学生自己的课表范围判断，而不是全学期所有教学班。
+  const studentWeekRange =
+    entryRows.length === 0
+      ? null
+      : {
+          startWeek: Math.min(...entryRows.map((row) => row.start_week)),
+          endWeek: Math.max(...entryRows.map((row) => row.end_week)),
+        };
+  const weekState = teachingWeekState({
+    startsOn: currentTerm.startsOn,
+    weekRange: studentWeekRange,
+  });
+  const inTeachingWeek = weekState.kind === "in_week";
+  const teachingWeek = weekState.kind === "in_week" ? weekState.week : null;
 
   return {
     currentTerm,
@@ -167,6 +185,8 @@ export async function getStudentTimetable(
     teachingWeek,
     inTeachingWeek,
     weekRange,
+    studentWeekRange,
+    weekState,
     entries: entryRows.map((row) => ({
       id: row.id,
       teachingClassId: row.teaching_class_id,

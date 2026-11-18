@@ -3,21 +3,8 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
 import type { GradeLock, GradeSheet, GradeSheetStudent } from "@/lib/grades";
-
-type ApiError = { error?: string };
-
-async function failureMessage(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  try {
-    const body = (await response.json()) as ApiError;
-    return body.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function cellKey(studentId: string, gradeItemId: string): string {
   return `${studentId}:${gradeItemId}`;
@@ -43,50 +30,38 @@ function OverallControls({
   async function saveOverride() {
     setPending(true);
     setError(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/overalls/${student.id}`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ score: value }),
-        },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "覆盖总评失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      const body = (await response.json()) as { sheet: GradeSheet };
-      onSheet(body.sheet);
+    const result = await submitJson<{ sheet: GradeSheet }>(
+      `/api/teaching-classes/${teachingClassId}/overalls/${student.id}`,
+      {
+        method: "PUT",
+        body: { score: value },
+        fallback: "覆盖总评失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+    onSheet(result.data.sheet);
+    setPending(false);
   }
 
   async function cancelOverride() {
     setPending(true);
     setError(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/overalls/${student.id}`,
-        { method: "DELETE" },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "取消覆盖失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      const body = (await response.json()) as { sheet: GradeSheet };
-      onSheet(body.sheet);
-      setValue("");
+    const result = await submitJson<{ sheet: GradeSheet }>(
+      `/api/teaching-classes/${teachingClassId}/overalls/${student.id}`,
+      { method: "DELETE", fallback: "取消覆盖失败，请稍后再试。" },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+    onSheet(result.data.sheet);
+    setValue("");
+    setPending(false);
   }
 
   return (
@@ -208,27 +183,20 @@ function PublishPanel({
   async function publish() {
     setPending(true);
     setError(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/publish`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ confirmed: true }),
-        },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "发布失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      const body = (await response.json()) as { sheet: GradeSheet };
-      onSheet(body.sheet);
+    const result = await submitJson<{ sheet: GradeSheet }>(
+      `/api/teaching-classes/${teachingClassId}/publish`,
+      {
+        body: { confirmed: true },
+        fallback: "发布失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+    onSheet(result.data.sheet);
+    setPending(false);
   }
 
   return (
@@ -265,28 +233,18 @@ function UnlockPanel({
     event.preventDefault();
     setPending(true);
     setError(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/unlock`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ reason }),
-        },
-      );
-      if (!response.ok) {
-        setError(await failureMessage(response, "解锁失败，请稍后再试。"));
-        setPending(false);
-        return;
-      }
-      const body = (await response.json()) as { sheet: GradeSheet };
-      onSheet(body.sheet);
-      setReason("");
+    const result = await submitJson<{ sheet: GradeSheet }>(
+      `/api/teaching-classes/${teachingClassId}/unlock`,
+      { body: { reason }, fallback: "解锁失败，请稍后再试。" },
+    );
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
-    } catch {
-      setError("网络异常，请稍后再试。");
-      setPending(false);
+      return;
     }
+    onSheet(result.data.sheet);
+    setReason("");
+    setPending(false);
   }
 
   return (
@@ -404,32 +362,23 @@ export function GradeSheetScreen({
     setSaving(true);
     setGridError(null);
     setSavedMessage(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/grades`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ scores }),
-        },
-      );
-      if (!response.ok) {
-        setGridError(await failureMessage(response, "保存成绩失败，请稍后再试。"));
-        setSaving(false);
-        return;
-      }
-      const body = (await response.json()) as {
-        sheet: GradeSheet;
-        updatedCount: number;
-      };
-      setSheet(body.sheet);
-      setDraft({});
-      setSavedMessage(`已保存 ${body.updatedCount} 处成绩。`);
+    const result = await submitJson<{
+      sheet: GradeSheet;
+      updatedCount: number;
+    }>(`/api/teaching-classes/${teachingClassId}/grades`, {
+      method: "PUT",
+      body: { scores },
+      fallback: "保存成绩失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setGridError(result.message);
       setSaving(false);
-    } catch {
-      setGridError("网络异常，请稍后再试。");
-      setSaving(false);
+      return;
     }
+    setSheet(result.data.sheet);
+    setDraft({});
+    setSavedMessage(`已保存 ${result.data.updatedCount} 处成绩。`);
+    setSaving(false);
   }
 
   async function createItem(event: React.FormEvent<HTMLFormElement>) {
@@ -438,32 +387,25 @@ export function GradeSheetScreen({
     const data = new FormData(form);
     setItemPending(true);
     setItemError(null);
-    try {
-      const response = await fetch(
-        `/api/teaching-classes/${teachingClassId}/grade-items`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            name: data.get("name"),
-            maxScore: data.get("maxScore"),
-            weight: data.get("weight"),
-          }),
+    const result = await submitJson<{ sheet: GradeSheet }>(
+      `/api/teaching-classes/${teachingClassId}/grade-items`,
+      {
+        body: {
+          name: data.get("name"),
+          maxScore: data.get("maxScore"),
+          weight: data.get("weight"),
         },
-      );
-      if (!response.ok) {
-        setItemError(await failureMessage(response, "添加成绩项失败，请稍后再试。"));
-        setItemPending(false);
-        return;
-      }
-      const body = (await response.json()) as { sheet: GradeSheet };
-      setSheet(body.sheet);
-      form.reset();
+        fallback: "添加成绩项失败，请稍后再试。",
+      },
+    );
+    if (!result.ok) {
+      setItemError(result.message);
       setItemPending(false);
-    } catch {
-      setItemError("网络异常，请稍后再试。");
-      setItemPending(false);
+      return;
     }
+    setSheet(result.data.sheet);
+    form.reset();
+    setItemPending(false);
   }
 
   return (

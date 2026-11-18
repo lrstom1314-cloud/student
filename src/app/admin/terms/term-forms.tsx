@@ -2,17 +2,8 @@
 
 import { useState } from "react";
 
+import { submitJson } from "@/lib/api-client";
 import { TERM_HALF_LABELS, type TermHalf } from "@/lib/term-labels";
-
-type ApiResult = { error?: string };
-
-async function postJson(route: string, body: unknown): Promise<Response> {
-  return fetch(route, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
 
 export function CreateAcademicYearForm() {
   const [error, setError] = useState<string | null>(null);
@@ -26,21 +17,16 @@ export function CreateAcademicYearForm() {
     const form = event.currentTarget;
     const data = new FormData(form);
 
-    try {
-      const response = await postJson("/api/admin/academic-years", {
-        startYear: Number(data.get("startYear")),
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "创建失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>("/api/admin/academic-years", {
+      body: { startYear: Number(data.get("startYear")) },
+      fallback: "创建失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -95,22 +81,16 @@ export function CreateTermForm({
 
     const data = new FormData(event.currentTarget);
 
-    try {
-      const response = await postJson("/api/admin/terms", {
-        academicYearId,
-        half: data.get("half"),
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "创建失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>("/api/admin/terms", {
+      body: { academicYearId, half: data.get("half") },
+      fallback: "创建失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -163,23 +143,17 @@ export function SetStartDateForm({
     const startsOnValue =
       typeof value === "string" && value.length > 0 ? value : null;
 
-    try {
-      const response = await fetch(`/api/admin/terms/${termId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ startsOn: startsOnValue }),
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "保存失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>(`/api/admin/terms/${termId}`, {
+      method: "PATCH",
+      body: { startsOn: startsOnValue },
+      fallback: "保存失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
@@ -235,22 +209,16 @@ export function SetCurrentTermControl({
     setError(null);
     setPending(true);
 
-    try {
-      const response = await postJson("/api/admin/current-term", {
-        termId,
-        confirmed: true,
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as ApiResult;
-        setError(body.error ?? "切换失败，请稍后再试。");
-        setPending(false);
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("网络异常，请稍后再试。");
+    const result = await submitJson<unknown>("/api/admin/current-term", {
+      body: { termId, confirmed: true },
+      fallback: "切换失败，请稍后再试。",
+    });
+    if (!result.ok) {
+      setError(result.message);
       setPending(false);
+      return;
     }
+    window.location.reload();
   }
 
   return (
